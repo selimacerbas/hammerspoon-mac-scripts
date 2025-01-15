@@ -9,7 +9,6 @@ hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "K", function()
         focusedWindow = nil
     end
 
-    hs.alert.show("Forward Cycle Triggered")
 
     -- Check if the focused app is Finder
     if focusedWindow and focusedWindow:application():title() == "Finder" then
@@ -90,8 +89,6 @@ hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "J", function()
         hs.alert.show("Focused window is minimized. Switching to the first visible window.")
         focusedWindow = nil
     end
-
-    hs.alert.show("Backward Cycle Triggered")
 
     -- Check if the focused app is Finder
     if focusedWindow and focusedWindow:application():title() == "Finder" then
