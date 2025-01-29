@@ -1,14 +1,71 @@
--- Update the Lua package path to include the modules directory
-package.path = package.path .. ';' .. hs.configdir .. '/modules/?.lua;' .. hs.configdir .. '/modules/?/init.lua'
+hs.loadSpoon("Apps")
+hs.loadSpoon("Vifari")
+hs.loadSpoon("Displays")
+hs.loadSpoon("MissionControl")
 
--- Load modules
-local apps_focus_on_app = require("apps.focus_on_app")
-local apps_move_between_apps = require("apps.move_between_apps")
 
-local displays_move_between_displays = require("displays.move_between_displays")
+-- Vifari
+hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "D", function()
+    hs.alert.show("Vifari Started")
+    spoon.Vifari:start()
+end)
 
-local mission_control_create_space = require("mission-control.create_space")
-local mission_control_toggle_desktop = require("mission-control.toggle_desktop")
-local mission_control_move_app_to_space = require("mission-control.move_app_to_space")
-local mission_control_move_between_spaces = require("mission-control.move_between_spaces")
-local mission_control_toggle_mission_control = require("mission-control.toggle_mission_control")
+hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "S", function()
+    hs.alert.show("Vifari Stopped")
+    spoon.Vifari:stop()
+end)
+
+-- Apps
+hs.hotkey.bind({ "cmd", "alt", "ctrl" }, "/", function()
+    spoon.Apps:bringAppToFront()
+end)
+
+hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "K", function()
+    spoon.Apps:cycleAppsForwards()
+end)
+
+hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "J", function()
+    spoon.Apps:cycleAppsBackwards()
+end)
+
+-- Displays
+hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "L", function()
+    spoon.Displays:cycleDisplaysForwards()
+end)
+
+hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "H", function()
+    spoon.Displays:cycleDisplaysBackwards()
+end)
+
+
+-- MissionControl
+hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "F", function()
+    spoon.MissionControl:createSpaceUnderCursor()
+end)
+
+hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "X", function()
+    spoon.MissionControl:removeCurrentSpace()
+end)
+
+hs.hotkey.bind({ "ctrl", "alt", "cmd" }, ",", function()
+    spoon.MissionControl:moveToNextSpace()
+end)
+
+hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "M", function()
+    spoon.MissionControl:moveToPreviousSpace()
+end)
+hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "R", function()
+    spoon.MissionControl:toggleShowDesktop()
+end)
+
+hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "E", function()
+    spoon.MissionControl:toggleMissionControl()
+end)
+
+hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "T", function()
+    spoon.MissionControl:moveAppToNextSpace()
+end)
+
+hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "Z", function()
+    spoon.MissionControl:moveAppToPreviousSpace()
+end)
