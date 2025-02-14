@@ -6,7 +6,7 @@ obj.__index = obj
 --------------------------------------------------------------------------------
 
 obj.name = "vifari"
-obj.version = "0.0.6"
+obj.version = "0.0.8"
 obj.author = "Sergey Tarasov <dzirtusss@gmail.com>"
 obj.homepage = "https://github.com/dzirtusss/vifari"
 obj.license = "MIT - https://opensource.org/licenses/MIT"
@@ -50,6 +50,7 @@ local mapping = {
   ["f"] = "cmdGotoLink",
   ["F"] = "cmdGotoLinkNewTab",
   ["gf"] = "cmdMoveMouseToLink",
+  ["gi"] = "cmdFocusInput",
   -- mouse
   ["zz"] = "cmdMoveMouseToCenter",
   -- clipboard
@@ -61,10 +62,12 @@ local config = {
   doublePressDelay = 0.3, -- seconds
   showLogs = false,
   mapping = mapping,
+  showMenuBarIcon = true,
   scrollStep = 100,
   scrollStepHalfPage = 500,
   smoothScroll = false,
   smoothScrollHalfPage = true,
+  openNewTabsInBackground = false,
   axEditableRoles = { "AXTextField", "AXComboBox", "AXTextArea" },
   axJumpableRoles = { "AXLink", "AXButton", "AXPopUpButton", "AXComboBox", "AXTextField", "AXMenuItem", "AXTextArea", "AXCheckBox" },
   -- chars that are acceptable for vimLoop
@@ -182,6 +185,28 @@ function current.visibleArea()
   return cached.visibleArea
 end
 
+local function findRoleElement(rootElement, role)
+  if rootElement:attributeValue("AXRole") == role then return rootElement end
+
+  for _, child in ipairs(rootElement:attributeValue("AXChildren") or {}) do
+    local result = findRoleElement(child, role)
+    if result then return result end
+  end
+end
+
+function current.axEditableElement()
+  local function findVisibleElement(role)
+    local element = findRoleElement(current.rootElement(), role)
+    return element and marks.isElementPartiallyVisible(element) and element
+  end
+  cached.axEditableElement = cached.axEditableElement
+    or findVisibleElement("AXTextField")
+    or findVisibleElement("AXComboBox")
+    or findVisibleElement("AXTextArea")
+  return cached.axEditableElement
+end
+
+
 local function isEditableControlInFocus()
   if current.axFocusedElement() then
     return tblContains(config.axEditableRoles, current.axFocusedElement():attributeValue("AXRole"))
@@ -233,6 +258,20 @@ local function openUrlInNewTab(url)
   hs.osascript.applescript(script)
 end
 
+local function openUrlInNewBackgroundTab(url)
+  local script = [[
+      tell application "Safari"
+        activate
+        tell window 1
+          make new tab with properties {URL:"%s"}
+        end tell
+      end tell
+      return
+    ]]
+  script = string.format(script, url)
+  hs.osascript.applescript(script)
+end
+
 local function setClipboardContents(contents)
   if contents and hs.pasteboard.setContents(contents) then
     hs.alert.show("Copied to clipboard: " .. contents, nil, nil, 4)
@@ -248,13 +287,35 @@ local function forceUnfocus()
   end
 end
 
+local function mergeConfigs(defaultConfig, userConfig)
+  if not userConfig then return defaultConfig end
+
+  local result = {}
+  for k, v in pairs(defaultConfig) do
+    result[k] = type(v) == "table" and hs.fnutils.copy(v) or v
+  end
+
+  for k, v in pairs(userConfig) do
+    if type(v) == "table" and type(result[k]) == "table" then
+      for subK, subV in pairs(v) do
+        result[k][subK] = subV
+      end
+    else
+      result[k] = v
+    end
+  end
+
+  return result
+end
 --------------------------------------------------------------------------------
 -- menubar
 --------------------------------------------------------------------------------
 
 function menuBar.new()
   if menuBar.item then menuBar.delete() end
-  menuBar.item = hs.menubar.new()
+  if config.showMenuBarIcon then
+    menuBar.item = hs.menubar.new()
+  end
 end
 
 function menuBar.delete()
@@ -283,7 +344,9 @@ local function setMode(mode, char)
   if current.mode == modes.MULTI then current.multi = char end
   if current.mode ~= modes.MULTI then current.multi = nil end
 
-  menuBar.item:setTitle(char or defaultModeChars[mode] or "?")
+  if menuBar.item then
+    menuBar.item:setTitle(char or defaultModeChars[mode] or "?")
+  end
 end
 
 --------------------------------------------------------------------------------
@@ -466,7 +529,7 @@ function commands.cmdGotoLinkNewTab(char)
   setMode(modes.LINKS, char)
   marks.onClickCallback = function(mark)
     local axURL = mark.element:attributeValue("AXURL")
-    openUrlInNewTab(axURL.url)
+    if config.openNewTabsInBackground then openUrlInNewBackgroundTab(axURL.url) else openUrlInNewTab(axURL.url) end
   end
   hs.timer.doAfter(0, function() marks.show(true) end)
 end
@@ -496,14 +559,21 @@ function commands.cmdCopyLinkUrlToClipboard(char)
   hs.timer.doAfter(0, function() marks.show(true) end)
 end
 
+function commands.cmdFocusInput()
+  if current.axEditableElement() then
+    forceUnfocus()
+    current.axEditableElement():setAttributeValue("AXFocused", true)
+  end
+end
+
 --------------------------------------------------------------------------------
 --- vifari
 --------------------------------------------------------------------------------
 
 local function fetchMappingPrefixes()
   mappingPrefixes = {}
-  for k, _ in pairs(config.mapping) do
-    if #k == 2 then
+  for k, v in pairs(config.mapping) do
+    if #k == 2 and v ~= false then
       mappingPrefixes[string.sub(k, 1, 1)] = true
     end
   end
@@ -524,6 +594,8 @@ local function vimLoop(char)
 
   if current.mode == modes.MULTI then char = current.multi .. char end
   local foundMapping = config.mapping[char]
+
+  if foundMapping == false then return end
 
   if foundMapping then
     setMode(modes.NORMAL)
@@ -597,7 +669,8 @@ local function onWindowUnfocused()
   setMode(modes.DISABLED)
 end
 
-function obj:start()
+function obj:start(userConfig)
+  config = mergeConfigs(config, userConfig)
   safariFilter = hs.window.filter.new("Safari")
   safariFilter:subscribe(hs.window.filter.windowFocused, onWindowFocused)
   safariFilter:subscribe(hs.window.filter.windowUnfocused, onWindowUnfocused)
