@@ -105,7 +105,7 @@ local function ensureSpoon(name, gitURL, branch)
         hs.execute(cmd)
     end
 end
-
+KEY CASTER
 ------------------------------------------------------------
 -- Add-ons (auto-clone once, then load)
 ------------------------------------------------------------
@@ -128,25 +128,27 @@ WarpMouse:start()
 
 -- Optional: For column
 spoon.KeyCaster:configure({
-    mode = "column",
-    fadingDuration = 2.0,
-    maxVisible = 5,
+    mode                 = "column",
+    fadingDuration       = 2.0,
+    maxVisible           = 5,
     minAlphaWhileVisible = 0.35,
-    followInterval = 0.4,
+    followInterval       = 0.4,
+    box                  = { w = 260, h = 36, spacing = 8, corner = 10 },
+    position             = { corner = "bottomLeft", x = 20, y = 80 },
+    margin               = { right = 20, bottom = 80 },
+    font                 = { name = "Menlo", size = 18 }, -- change to any installed font name
     -- column behavior
-    column = {
+    column               = {
         maxCharsPerBox = 14,  -- start a new box after 14 glyphs
         newBoxOnPause  = 0.70 -- or after 0.7s idle
     },
-    line = {
+    -- line behaviour
+    line                 = {
         box = { w = 420, h = 36, corner = 10 },
         maxSegments = 60,
         gap = 6, -- px between segments
     },
     -- visuals
-    box = { w = 260, h = 36, spacing = 8, corner = 10 },
-    margin = { right = 20, bottom = 80 },
-    font = { name = "Menlo", size = 18 }, -- change to any installed font name
 })
 
 -- Bind your requested hotkeys:

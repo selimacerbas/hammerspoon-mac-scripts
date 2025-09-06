@@ -29,41 +29,41 @@ obj.logger = hs.logger.new("KeyCaster", "info")
 -- Configuration
 -- ===============
 obj.config = {
-    mode                 = "column", -- "column" | "line"
-    fadingDuration       = 2.0,      -- seconds to go from 1.0 alpha to minAlpha
-    maxVisible           = 5,        -- keep last N at least minAlpha
-    minAlphaWhileVisible = 0.35,     -- clamp alpha for items still within maxVisible
-    followInterval       = 0.40,     -- seconds; reposition to the screen under mouse
+    mode = "column",             -- "column" | "line"
+    fadingDuration = 2.0,        -- seconds to go from 1.0 alpha to minAlpha
+    maxVisible = 5,              -- keep last N at least minAlpha
+    minAlphaWhileVisible = 0.35, -- clamp alpha for items still within maxVisible
+    followInterval = 0.40,       -- seconds; reposition to the screen under mouse
 
     -- Column mode visuals
-    box                  = { w = 260, h = 36, spacing = 8, corner = 10 },
-    margin               = { right = 20, bottom = 80 },
-    column               = {
+    box = { w = 260, h = 36, spacing = 8, corner = 10 },
+    position = { corner = "bottomRight", x = 20, y = 80 },
+    column = {
         maxCharsPerBox = 14,   -- start a new box if current has this many glyphs
         newBoxOnPause  = 0.70, -- seconds of inactivity to start a new box
     },
 
     -- Line mode visuals
-    line                 = {
+    line = {
         box = { w = 520, h = 36, corner = 10 },
         maxSegments = 60, -- hard cap on segments kept in memory
         gap = 6,          -- px gap between segments
     },
 
-    font                 = { name = "Menlo", size = 18 }, -- default to Menlo (broadly available)
-    colors               = {
+    font = { name = "Menlo", size = 18 }, -- default to Menlo (broadly available)
+    colors = {
         bg     = { red = 0, green = 0, blue = 0, alpha = 0.78 },
         text   = { red = 1, green = 1, blue = 1, alpha = 0.98 },
         stroke = { red = 1, green = 1, blue = 1, alpha = 0.15 },
         shadow = { red = 0, green = 0, blue = 0, alpha = 0.6 },
     },
-    ignoreAutoRepeat     = true,
+    ignoreAutoRepeat = true,
 }
 
 -- Default hotkeys
 obj.defaultHotkeys = {
-    start = { { "ctrl", "alt", "cmd" }, "Y" },
-    stop  = { { "ctrl", "alt", "cmd" }, "U" },
+    start = { { "ctrl", "alt", "cmd" }, "K" },
+    stop  = { { "ctrl", "alt", "cmd" }, "F" },
 }
 
 -- ===============
@@ -176,12 +176,41 @@ function obj:_currentScreen()
     return hs.mouse.getCurrentScreen() or hs.screen.mainScreen()
 end
 
-function obj:_basePoint(boxW, boxH)
-    local scr = self:_currentScreen()
-    local f = scr:frame()
-    local x = f.x + f.w - self.config.margin.right - boxW
-    local yBottom = f.y + f.h - self.config.margin.bottom
-    return x, yBottom
+function obj:_anchor()
+    local pos    = self.config.position or { corner = "bottomRight", x = 20, y = 80 }
+    local corner = string.lower(pos.corner or "bottomRight")
+    local scr    = self:_currentScreen()
+    local f      = scr:frame()
+    local rightX = f.x + f.w - (pos.x or 20)
+    local leftX  = f.x + (pos.x or 20)
+    local topY   = f.y + (pos.y or 80)
+    local botY   = f.y + f.h - (pos.y or 80)
+    local ax, ay
+    if corner == "bottomright" then
+        ax, ay = rightX, botY
+    elseif corner == "topright" then
+        ax, ay = rightX, topY
+    elseif corner == "topleft" then
+        ax, ay = leftX, topY
+    elseif corner == "bottomleft" then
+        ax, ay = leftX, botY
+    else
+        ax, ay = rightX, botY
+    end
+    return ax, ay, corner
+end
+
+function obj:_baseFrameForIndex(i, boxW, boxH)
+    local ax, ay, corner = self:_anchor()
+    local x = (string.find(corner, "right", 1, true) and (ax - boxW)) or ax
+    local spacing = self.config.box.spacing or 8
+    local y
+    if string.find(corner, "bottom", 1, true) then
+        y = ay - (boxH + spacing) * (i - 1) - boxH
+    else
+        y = ay + (boxH + spacing) * (i - 1)
+    end
+    return { x = x, y = y, w = boxW, h = boxH }
 end
 
 -- ===============
@@ -292,11 +321,9 @@ end
 
 function obj:_renderColumnPositions()
     local box = self.config.box
-    local x, yBottom = self:_basePoint(box.w, box.h)
     for i, item in ipairs(self._items) do
         if item.canvas then
-            local y = yBottom - (box.h + box.spacing) * (i - 1) - box.h
-            item.canvas:frame({ x = x, y = y, w = box.w, h = box.h })
+            item.canvas:frame(self:_baseFrameForIndex(i, box.w, box.h))
         end
     end
 end
@@ -445,8 +472,10 @@ function obj:_layoutLine()
     end
 
     -- position the single line canvas on the active display
-    local x, yBottom = self:_basePoint(L.box.w, L.box.h)
-    self._lineCanvas:frame({ x = x, y = yBottom - L.box.h, w = L.box.w, h = L.box.h })
+    local ax, ay, corner = self:_anchor()
+    local x = (string.find(corner, "right", 1, true) and (ax - L.box.w)) or ax
+    local y = (string.find(corner, "bottom", 1, true) and (ay - L.box.h)) or ay
+    self._lineCanvas:frame({ x = x, y = y, w = L.box.w, h = L.box.h })
 end
 
 function obj:_tickLine()
