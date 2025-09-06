@@ -39,6 +39,52 @@ local function focusFrontmostWindowOnScreen(screen)
     hs.alert.show("No frontmost window found on the target screen")
 end
 
+-- Helper function to move a window to a target space
+local function moveWindowToSpace(win, targetSpaceID)
+    print("Attempting to move window ID:", win:id(), "to space ID:", targetSpaceID)
+
+    -- Check if the window is already in the target space
+    local currentSpaces = spaces.windowSpaces(win)
+    if currentSpaces and hs.fnutils.contains(currentSpaces, targetSpaceID) then
+        hs.alert.show("Window is already in the target space")
+        return false
+    end
+
+    -- Check if the target space is a user space
+    local spaceType = spaces.spaceType(targetSpaceID)
+    if spaceType ~= "user" then
+        hs.alert.show("Target space is not a user space")
+        return false
+    end
+
+    -- Check if the window is compatible (not full-screen or tiled)
+    if not win:isStandard() or win:isFullScreen() then
+        hs.alert.show("Window is not compatible for movement (not standard or is full-screen)")
+        return false
+    end
+
+    -- Attempt to move the window
+    local success, err = spaces.moveWindowToSpace(win, targetSpaceID)
+    if not success then
+        hs.alert.show("Failed to move window: " .. (err or "Unknown error"))
+        return false
+    end
+
+    -- Retry Verification: Ensure the window has moved
+    hs.timer.doAfter(0.5, function()
+        local targetWindows = spaces.windowsForSpace(targetSpaceID)
+        if not hs.fnutils.contains(targetWindows, win:id()) then
+            hs.alert.show("Window move verification failed. Retrying...")
+            print("Retrying move of Window ID:", win:id(), "to space ID:", targetSpaceID)
+            spaces.moveWindowToSpace(win, targetSpaceID) -- Retry the move
+        else
+            print("Window ID:", win:id(), "successfully moved to space ID:", targetSpaceID)
+        end
+    end)
+
+    return true
+end
+
 --- Method: Create a space under the cursor
 function obj:createSpaceUnderCursor()
     local currentScreen = mouse.getCurrentScreen()
@@ -54,6 +100,18 @@ function obj:createSpaceUnderCursor()
     else
         hs.alert.show("Space created on screen: " .. currentScreen:name())
     end
+end
+
+-- Method: Toggle Show Desktop
+function obj:toggleShowDesktop()
+    hs.spaces.toggleShowDesktop()
+    hs.alert.show("Toggled Show Desktop")
+end
+
+-- Method: Toggle Mission Control
+function obj:toggleMissionControl()
+    hs.spaces.toggleMissionControl()
+    hs.alert.show("Toggled Mission Control")
 end
 
 -- Method: Delete the current space
@@ -184,53 +242,6 @@ function obj:moveToPreviousSpace()
     end
 end
 
--- Helper function to move a window to a target space
-local function moveWindowToSpace(win, targetSpaceID)
-    print("Attempting to move window ID:", win:id(), "to space ID:", targetSpaceID)
-
-    -- Check if the window is already in the target space
-    local currentSpaces = spaces.windowSpaces(win)
-    if currentSpaces and hs.fnutils.contains(currentSpaces, targetSpaceID) then
-        hs.alert.show("Window is already in the target space")
-        return false
-    end
-
-    -- Check if the target space is a user space
-    local spaceType = spaces.spaceType(targetSpaceID)
-    if spaceType ~= "user" then
-        hs.alert.show("Target space is not a user space")
-        return false
-    end
-
-    -- Check if the window is compatible (not full-screen or tiled)
-    if not win:isStandard() or win:isFullScreen() then
-        hs.alert.show("Window is not compatible for movement (not standard or is full-screen)")
-        return false
-    end
-
-    -- Attempt to move the window
-    local success, err = spaces.moveWindowToSpace(win, targetSpaceID)
-    if not success then
-        hs.alert.show("Failed to move window: " .. (err or "Unknown error"))
-        return false
-    end
-
-    -- Retry Verification: Ensure the window has moved
-    hs.timer.doAfter(0.5, function()
-        local targetWindows = spaces.windowsForSpace(targetSpaceID)
-        if not hs.fnutils.contains(targetWindows, win:id()) then
-            hs.alert.show("Window move verification failed. Retrying...")
-            print("Retrying move of Window ID:", win:id(), "to space ID:", targetSpaceID)
-            spaces.moveWindowToSpace(win, targetSpaceID) -- Retry the move
-        else
-            print("Window ID:", win:id(), "successfully moved to space ID:", targetSpaceID)
-        end
-    end)
-
-    return true
-end
-
-
 --- Method: Move the focused app to the next space
 function obj:moveAppToNextSpace()
     local win = window.focusedWindow()
@@ -323,18 +334,6 @@ function obj:moveAppToPreviousSpace()
         end)
         hs.alert.show("Moved app to previous space")
     end
-end
-
--- Method: Toggle Show Desktop
-function obj:toggleShowDesktop()
-    hs.spaces.toggleShowDesktop()
-    hs.alert.show("Toggled Show Desktop")
-end
-
--- Method: Toggle Mission Control
-function obj:toggleMissionControl()
-    hs.spaces.toggleMissionControl()
-    hs.alert.show("Toggled Mission Control")
 end
 
 return obj
