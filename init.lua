@@ -105,7 +105,6 @@ local function ensureSpoon(name, gitURL, branch)
         hs.execute(cmd)
     end
 end
-KEY CASTER
 ------------------------------------------------------------
 -- Add-ons (auto-clone once, then load)
 ------------------------------------------------------------
