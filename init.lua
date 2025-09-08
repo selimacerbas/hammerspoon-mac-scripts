@@ -1,6 +1,27 @@
 hs.loadSpoon("Vifari")
 hs.loadSpoon("KeyCaster")
 
+--- Usage:
+hs.loadSpoon("CursorScope")
+
+spoon.CursorScope:configure({
+    -- pin scope to a corner with offsets (in points/pixels)
+    position   = { corner = "bottomRight", x = 20, y = 80 },
+
+    -- make the scope circular
+    scopeShape = "circle",
+
+    -- (optional) tune look
+    scopeSize  = 300,
+    scopeZoom  = 2.5,
+    idleColor  = { red = 0.2, green = 1, blue = 0.2, alpha = 0.9 },
+    clickColor = { red = 1, green = 0.3, blue = 0.1, alpha = 1.0 },
+})
+
+spoon.CursorScope:bindHotkeys() -- ⌃⌥⌘Z start, ⌃⌥⌘U stop
+
+-- (Optionally start it right away)
+-- spoon.CursorScope:start()
 ------------------------------------------------------------
 -- SpoonInstall + PaperWM
 ------------------------------------------------------------
