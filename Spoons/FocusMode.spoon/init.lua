@@ -2,12 +2,11 @@
 --- A Hammerspoon Spoon that dims everything except your focused app
 --- (and optionally the app under your mouse cursor).
 ---
---- Features:
----   • Dims all non-focused app windows across multiple displays
----   • Optional mouse-aware dimming: the app under your cursor also stays undimmed
----   • Lightweight overlays using hs.canvas at overlay level with click-through
----   • Menu bar indicator ("FM") when active with quick toggles
----   • Start/Stop hotkeys (defaults: ⌃⌥⌘ I to start, ⌃⌥⌘ O to stop)
+--- Tidy build: minimal changes, no PaperWM coupling.
+--- Key points:
+---   • Watches only the CURRENT Space (less noise, same behavior)
+---   • No suspend/space watcher logic needed
+---   • Overlays join all Spaces (original behavior), click-through
 ---
 --- Author: You 💪  | License: MIT
 
@@ -15,7 +14,7 @@ local obj = {}
 obj.__index = obj
 
 obj.name = "FocusMode"
-obj.version = "1.0.3"
+obj.version = "1.3.1"
 obj.author = "FocusMode Spoon"
 obj.homepage = "https://github.com/yourname/FocusMode.spoon"
 
@@ -51,7 +50,7 @@ obj.defaultHotkeys = {
 
 obj._log = hs.logger.new("FocusMode", "info")
 obj._overlays = {}       -- screenUUID -> hs.canvas
-obj._wf = nil            -- hs.window.filter subscription
+obj._wf = nil            -- hs.window.filter instance
 obj._screenWatcher = nil -- hs.screen.watcher
 obj._mouseTap = nil      -- hs.eventtap for mouse moved
 obj._mouseTimer = nil    -- throttle timer
@@ -75,15 +74,15 @@ local function isValidWindow(w)
     return f and f.w > 0 and f.h > 0 and w:isVisible()
 end
 
--- Get window under mouse (topmost ordered window containing point)
+-- Get window under mouse (topmost visible window containing point)
 local function windowUnderMouse()
-    -- Use modern API; fall back for older Hammerspoon builds
     local pt = (type(hs.mouse.absolutePosition) == "function" and hs.mouse.absolutePosition()) or
-    hs.mouse.getAbsolutePosition()
-    for _, w in ipairs(hs.window.orderedWindows()) do
+        hs.mouse.getAbsolutePosition()
+    -- Prefer visible windows (current Space); fall back to ordered list
+    local wins = hs.window.visibleWindows and hs.window.visibleWindows() or hs.window.orderedWindows()
+    for _, w in ipairs(wins) do
         if isValidWindow(w) then
             local f = w:frame()
-            -- Robust point-in-rect check without relying on geometry helpers
             if pt.x >= f.x and pt.x <= f.x + f.w and pt.y >= f.y and pt.y <= f.y + f.h then
                 return w
             end
@@ -101,11 +100,11 @@ function obj:_ensureOverlays()
         local uuid = s:getUUID()
         known[uuid] = true
         if not self._overlays[uuid] then
-            local frame = s:frame() -- use workspace frame (not fullFrame) so menubar/dock stay undimmed
+            local frame = s:frame() -- workspace frame (not fullFrame) so menubar/dock stay undimmed
             local cv = hs.canvas.new(frame)
             cv:level(hs.canvas.windowLevels.overlay)
 
-            -- Join all Spaces and (if available) ignore mouse events so clicks pass through.
+            -- Original behavior: join all Spaces + click-through
             local wb = hs.canvas.windowBehaviors
             local behaviors = { wb.canJoinAllSpaces }
             if wb.ignoresMouseEvents then table.insert(behaviors, wb.ignoresMouseEvents) end
@@ -226,36 +225,38 @@ end
 function obj:_startWatchers()
     if self._wf then return end
 
-    -- Window filter for a broad set of events (subscribe defensively to avoid version mismatches)
-    self._wf = hs.window.filter.new(nil)
+    -- Watch only the CURRENT Space for fewer spurious events
+    self._wf = hs.window.filter.new(nil):setCurrentSpace(true)
 
     local wf = hs.window.filter
-    local function trySubscribe(ev)
+    local function safeSubscribe(ev, cb)
         if not ev then return end
-        local ok, err = pcall(function()
-            self._wf:subscribe(ev, function() self:_redraw() end)
-        end)
+        local ok, err = pcall(function() self._wf:subscribe(ev, cb) end)
         if not ok then self._log.w("window.filter event not supported: " .. tostring(ev) .. " -> " .. tostring(err)) end
     end
 
-    -- Core events (widely supported)
-    trySubscribe(wf.windowsChanged)
-    trySubscribe(wf.windowFocused)
-    trySubscribe(wf.windowUnfocused)
-    trySubscribe(wf.windowMoved)
-    trySubscribe(wf.windowResized)
-    trySubscribe(wf.windowMinimized)
-    trySubscribe(wf.windowUnminimized)
-    trySubscribe(wf.windowDestroyed)
-    trySubscribe(wf.windowCreated)
+    local function onEvent()
+        self:_redraw()
+    end
+
+    -- Subscribe (intentionally omit wf.windowsChanged — it's noisy and redundant here)
+    safeSubscribe(wf.windowFocused, onEvent)
+    safeSubscribe(wf.windowUnfocused, onEvent)
+    safeSubscribe(wf.windowMoved, onEvent)
+    safeSubscribe(wf.windowResized, onEvent)
+    safeSubscribe(wf.windowMinimized, onEvent)
+    safeSubscribe(wf.windowUnminimized, onEvent)
+    safeSubscribe(wf.windowDestroyed, onEvent)
+    safeSubscribe(wf.windowCreated, onEvent)
 
     -- Screen watcher (resolution/display changes)
     self._screenWatcher = hs.screen.watcher.new(function()
         self:_ensureOverlays()
         self:_redraw()
-    end):start()
+    end)
+    self._screenWatcher:start()
 
-    -- Mouse tracking (eventtap is high-frequency; throttle with a timer)
+    -- Mouse tracking (throttled)
     self._mouseTap = hs.eventtap.new({ hs.eventtap.event.types.mouseMoved }, function(_, _)
         if not self._mouseTimer then
             self._mouseTimer = hs.timer.doAfter(self.mouseUpdateThrottle, function()
@@ -270,16 +271,20 @@ end
 
 function obj:_stopWatchers()
     if self._wf then
-        self._wf:unsubscribeAll(); self._wf = nil
+        self._wf:unsubscribeAll()
+        self._wf = nil
     end
     if self._screenWatcher then
-        self._screenWatcher:stop(); self._screenWatcher = nil
+        self._screenWatcher:stop()
+        self._screenWatcher = nil
     end
     if self._mouseTap then
-        self._mouseTap:stop(); self._mouseTap = nil
+        self._mouseTap:stop()
+        self._mouseTap = nil
     end
     if self._mouseTimer then
-        self._mouseTimer:stop(); self._mouseTimer = nil
+        self._mouseTimer:stop()
+        self._mouseTimer = nil
     end
 end
 

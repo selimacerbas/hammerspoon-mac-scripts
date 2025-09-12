@@ -76,7 +76,7 @@ spoon.SpoonInstall:andUse("PaperWM", {
         s:bindHotkeys(s.default_hotkeys)
 
         -- -- ② Make “half” the only width in the cycle list
-        s.window_ratios = { 1 / 2 } -- always snap to 50% when we cycle. (Doc: window_ratios)  -- <- NEW
+        s.window_ratios = { 1 / 2 } -- always snap to 50% when we cycle. (Doc: window_ratios)
         --
         --
         -- -- ③ Auto-normalize new/visible windows to 50%
@@ -137,27 +137,69 @@ spoon.SpoonInstall:andUse("PaperWM", {
 
         function nav:exited() if tip then hs.alert.closeAll() end end
 
+        -- ——— Space-safe wrappers, This part is crucial with the integration of FocusMode ---
+        local function now() return hs.timer.secondsSinceEpoch() end
+        local lastMoveAt = 0
+
+        local function wrapMove(fn)
+            return function()
+                lastMoveAt = now()
+                -- optional: quiet FocusMode if it’s running
+                if _G.FocusMode and FocusMode._running and FocusMode._suspend then
+                    FocusMode:_suspend(1.2)
+                end
+                fn()                                      -- perform PaperWM move_window_N
+                hs.timer.doAfter(0.25, A.refresh_windows) -- let Mission Control settle, then refresh
+            end
+        end
+
+        local function withRefresh(fn)
+            return function()
+                local dt = now() - lastMoveAt
+                if dt < 1.0 then
+                    -- if this follows a move, give Spaces a tick before refreshing+focusing
+                    hs.timer.doAfter(0.15, function()
+                        A.refresh_windows(); fn()
+                    end)
+                else
+                    A.refresh_windows()
+                    fn()
+                end
+            end
+        end
+
+        local function wrapSwitch(fn)
+            return function()
+                fn()
+                hs.timer.doAfter(0.25, A.refresh_windows)
+            end
+        end
         nav:bind({}, "escape", function() nav:exit() end)
         nav:bind({ "cmd" }, "return", function() nav:exit() end)
-        nav:bind({}, "h", nil, A.focus_left, nil, A.focus_left)
-        nav:bind({}, "j", nil, A.focus_down, nil, A.focus_down)
-        nav:bind({}, "k", nil, A.focus_up, nil, A.focus_up)
-        nav:bind({}, "l", nil, A.focus_right, nil, A.focus_right)
-        nav:bind({ "shift" }, "h", nil, A.swap_left, nil, A.swap_left)
-        nav:bind({ "shift" }, "j", nil, A.swap_down, nil, A.swap_down)
-        nav:bind({ "shift" }, "k", nil, A.swap_up, nil, A.swap_up)
-        nav:bind({ "shift" }, "l", nil, A.swap_right, nil, A.swap_right)
+
+        nav:bind({}, "h", nil, withRefresh(A.focus_left), nil, withRefresh(A.focus_left))
+        nav:bind({}, "l", nil, withRefresh(A.focus_right), nil, withRefresh(A.focus_right))
+        nav:bind({}, "j", nil, withRefresh(A.focus_down), nil, withRefresh(A.focus_down))
+        nav:bind({}, "k", nil, withRefresh(A.focus_up), nil, withRefresh(A.focus_up))
+
+        nav:bind({ "shift" }, "h", nil, withRefresh(A.swap_left), nil, withRefresh(A.swap_left))
+        nav:bind({ "shift" }, "j", nil, withRefresh(A.swap_down), nil, withRefresh(A.swap_down))
+        nav:bind({ "shift" }, "k", nil, withRefresh(A.swap_up), nil, withRefresh(A.swap_up))
+        nav:bind({ "shift" }, "l", nil, withRefresh(A.swap_right), nil, withRefresh(A.swap_right))
+
         nav:bind({}, "c", nil, A.center_window)
         nav:bind({}, "f", nil, A.full_width)
         nav:bind({}, "r", nil, A.cycle_width)
-        nav:bind({}, ",", nil, A.switch_space_l, A.switch_space_l)
-        nav:bind({}, ".", nil, A.switch_space_r, nil, A.switch_space_r)
-        nav:bind({}, "1", nil, A.switch_space_1, nil, A.switch_space_1)
-        nav:bind({}, "2", nil, A.switch_space_2, nil, A.switch_space_2)
-        nav:bind({}, "3", nil, A.switch_space_3, nil, A.switch_space_3)
-        nav:bind({ "shift" }, "1", nil, A.move_window_1, nil, A.move_window_1)
-        nav:bind({ "shift" }, "2", nil, A.move_window_2, nil, A.move_window_2)
-        nav:bind({ "shift" }, "3", nil, A.move_window_3, nil, A.move_window_3)
+
+        nav:bind({}, ",", nil, wrapSwitch(A.switch_space_l), wrapSwitch(A.switch_space_l))
+        nav:bind({}, ".", nil, wrapSwitch(A.switch_space_r), wrapSwitch(A.switch_space_r))
+        nav:bind({}, "1", nil, wrapSwitch(A.switch_space_1), wrapSwitch(A.switch_space_1))
+        nav:bind({}, "2", nil, wrapSwitch(A.switch_space_2), wrapSwitch(A.switch_space_2))
+        nav:bind({}, "3", nil, wrapSwitch(A.switch_space_3), wrapSwitch(A.switch_space_3))
+
+        nav:bind({ "shift" }, "1", nil, wrapMove(A.move_window_1), nil, wrapMove(A.move_window_1))
+        nav:bind({ "shift" }, "2", nil, wrapMove(A.move_window_2), nil, wrapMove(A.move_window_2))
+        nav:bind({ "shift" }, "3", nil, wrapMove(A.move_window_3), nil, wrapMove(A.move_window_3))
     end
 })
 
