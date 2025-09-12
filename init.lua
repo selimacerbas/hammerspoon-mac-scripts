@@ -1,8 +1,28 @@
 hs.loadSpoon("Vifari")
 hs.loadSpoon("KeyCaster")
 
---- Usage:
+------------------------------------------------------------
+-- FocusMode
+------------------------------------------------------------
+hs.loadSpoon("FocusMode")
 
+-- (Optional) change settings before start
+spoon.FocusMode.dimAlpha = 0.5
+spoon.FocusMode.mouseDim = true
+spoon.FocusMode.windowCornerRadius = 8
+
+-- (Optional) rebind hotkeys (defaults are ⌃⌥⌘ I to start, ⌃⌥⌘ O to stop)
+spoon.FocusMode:bindHotkeys({
+    start = { { "ctrl", "alt", "cmd" }, "I" },
+    stop  = { { "ctrl", "alt", "cmd" }, "O" },
+})
+
+-- Start automatically on launch (optional)
+spoon.FocusMode:start()
+
+------------------------------------------------------------
+--CursorScope
+------------------------------------------------------------
 hs.loadSpoon("CursorScope")
 spoon.CursorScope:configure({
     global = { fps = 60 },
@@ -55,31 +75,44 @@ spoon.SpoonInstall:andUse("PaperWM", {
         -- ① Bind defaults
         s:bindHotkeys(s.default_hotkeys)
 
-        -- ② Make “half” the only width in the cycle list
+        -- -- ② Make “half” the only width in the cycle list
         s.window_ratios = { 1 / 2 } -- always snap to 50% when we cycle. (Doc: window_ratios)  -- <- NEW
-
-        -- ③ Auto-normalize new/visible windows to 50%
-        local A = s.actions.actions()
-        local normalized = {} -- remember which window ids we already normalized         -- <- NEW
+        --
+        --
+        -- -- ③ Auto-normalize new/visible windows to 50%
+        local A = s.actions.actions() -- PaperWM actions table (zero-arg functions)  -- uses API shown in repo README
+        local normalized = {}         -- remember which windows we've normalized
 
         local function normalizeToHalf(win)
-            if not win or normalized[win:id()] then return end
-            normalized[win:id()] = true
+            if not win then return end
+            local id = win:id()
+            if not id or normalized[id] then return end
 
-            -- Ensure PaperWM is aware of the window, then set width to 1/2
-            s:addWindow(win) -- PaperWM method                                 -- <- NEW
-            local prev = hs.window.frontmostWindow()
-            win:focus()      -- act on this window’s column                    -- <- NEW
-            A.cycle_width()  -- with ratios={1/2}, one cycle => 50%            -- <- NEW
-            if prev and prev:id() ~= win:id() then prev:focus() end
+            -- only act on windows PaperWM actually manages
+            if not s.window_filter:isWindowAllowed(win) then return end -- hs.window.filter API
+
+            -- make sure PaperWM has (re)indexed windows before acting
+            s:refreshWindows() -- PaperWM API
+
+            -- give PaperWM a moment to anchor the window, then set it to 50%
+            hs.timer.doAfter(0.10, function()
+                local prev = hs.window.frontmostWindow()
+                win:focus()
+                A.cycle_width() -- with window_ratios={1/2}, one cycle => 50%
+                normalized[id] = true
+                if prev and prev:id() ~= id then prev:focus() end
+            end)
         end
 
-        -- Subscribe to window events from the spoon’s window_filter
+        -- subscribe to relevant events from the spoon’s window_filter
         s.window_filter:subscribe({
             hs.window.filter.windowCreated,
             hs.window.filter.windowVisible,
-        }, function(win) hs.timer.doAfter(0.05, function() normalizeToHalf(win) end) end) -- <- NEW
-        -- (hs.window.filter events doc)                                                     -- <- NEW
+        }, function(win)
+            -- slight debounce so PaperWM can see the window
+            hs.timer.doAfter(0.05, function() normalizeToHalf(win) end)
+        end)
+
 
         -- Your existing helpers…
         hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "R", A.refresh_windows)
