@@ -271,7 +271,15 @@ spoon.KeyCaster:configure({
 -- Bind your requested hotkeys:
 spoon.KeyCaster:bindHotkeys(spoon.KeyCaster.defaultHotkeys)
 
--- Vifari
+
+-- Load and auto-start Vifari
+if hs.loadSpoon("Vifari") and spoon.Vifari then
+    spoon.Vifari:start()
+else
+    hs.alert.show("Vifari spoon not found")
+end
+
+-- Your hotkeys can stay as-is:
 hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "D", function()
     hs.alert.show("Vifari Started")
     spoon.Vifari:start()
