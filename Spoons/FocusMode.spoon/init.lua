@@ -14,7 +14,7 @@ local obj = {}
 obj.__index = obj
 
 obj.name = "FocusMode"
-obj.version = "1.3.1"
+obj.version = "1.3.3"
 obj.author = "FocusMode Spoon"
 obj.homepage = "https://github.com/yourname/FocusMode.spoon"
 
@@ -32,7 +32,7 @@ obj.windowCornerRadius = 6
 --- (Renamed from `mouseUndim` → `mouseDim`; old key is still honored.)
 obj.mouseDim = true
 
---- Polling throttle for mouse move updates, in seconds (prevents excessive redraws).
+--- Throttle for mouse move updates, in seconds (prevents excessive redraws).
 obj.mouseUpdateThrottle = 0.05
 
 --- If true, bind default hotkeys automatically when the Spoon is loaded.
@@ -64,25 +64,29 @@ local function copy(t)
     return r
 end
 
--- Utility: is window standard & visible
+-- Utility: is window standard & visible *and on-screen*
 local function isValidWindow(w)
     if not w then return false end
     if not w:isStandard() then return false end
     if w:isMinimized() then return false end
     if not w:application() then return false end
+    if not w:screen() then return false end
     local f = w:frame()
-    return f and f.w > 0 and f.h > 0 and w:isVisible()
+    local visible = (type(w.isVisible) == "function") and w:isVisible() or true
+    return f and f.w > 0 and f.h > 0 and visible
 end
 
 -- Get window under mouse (topmost visible window containing point)
 local function windowUnderMouse()
-    local pt = (type(hs.mouse.absolutePosition) == "function" and hs.mouse.absolutePosition()) or
-        hs.mouse.getAbsolutePosition()
-    -- Prefer visible windows (current Space); fall back to ordered list
-    local wins = hs.window.visibleWindows and hs.window.visibleWindows() or hs.window.orderedWindows()
+    local pt = (type(hs.mouse.absolutePosition) == "function" and hs.mouse.absolutePosition())
+        or hs.mouse.getAbsolutePosition()
+
+    -- Prefer strict z-order; filter for on-screen/visible via isValidWindow
+    local wins = hs.window.orderedWindows()
     for _, w in ipairs(wins) do
         if isValidWindow(w) then
             local f = w:frame()
+            -- Robust point-in-rect check without relying on geometry helpers
             if pt.x >= f.x and pt.x <= f.x + f.w and pt.y >= f.y and pt.y <= f.y + f.h then
                 return w
             end
@@ -198,6 +202,8 @@ function obj:_redraw()
         if s then
             local sFrame = s:frame()
             cv[1].frame = { x = 0, y = 0, w = sFrame.w, h = sFrame.h }
+            -- LIVE opacity updates without restart
+            cv[1].fillColor = { red = 0, green = 0, blue = 0, alpha = self.dimAlpha }
         end
 
         local holes = holesPerScreen[uuid]
@@ -239,7 +245,7 @@ function obj:_startWatchers()
         self:_redraw()
     end
 
-    -- Subscribe (intentionally omit wf.windowsChanged — it's noisy and redundant here)
+    -- Subscribe (omit wf.windowsChanged — it's noisy and redundant here)
     safeSubscribe(wf.windowFocused, onEvent)
     safeSubscribe(wf.windowUnfocused, onEvent)
     safeSubscribe(wf.windowMoved, onEvent)
@@ -296,7 +302,7 @@ function obj:_showMenubar()
     self._menubar:setTooltip("FocusMode active")
     self._menubar:setMenu(function()
         local items = {
-            { title = "FocusMode is ON", disabled = true },
+            { title = "FocusMode is ON",                                       disabled = true },
             {
                 title = "Mouse Dimming " .. (self.mouseDim and "✓" or "✗"),
                 fn = function()
@@ -305,6 +311,20 @@ function obj:_showMenubar()
                 end
             },
             { title = "Dim Opacity: " .. string.format("%.2f", self.dimAlpha), disabled = true },
+            {
+                title = "Brighter (+)",
+                fn = function()
+                    self.dimAlpha = math.max(0.00, self.dimAlpha - 0.05)
+                    self:_redraw()
+                end
+            },
+            {
+                title = "Dimmer (−)",
+                fn = function()
+                    self.dimAlpha = math.min(0.95, self.dimAlpha + 0.05)
+                    self:_redraw()
+                end
+            },
             { title = "—", disabled = true },
             { title = "Stop FocusMode (⌃⌥⌘ O)", fn = function() self:stop() end },
         }
