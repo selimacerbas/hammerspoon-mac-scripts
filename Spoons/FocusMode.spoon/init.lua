@@ -1,49 +1,40 @@
 --- === FocusMode ===
 --- A Hammerspoon Spoon that dims everything except your focused app
 --- (and optionally the app under your mouse cursor).
----
---- Tidy build: minimal changes, no PaperWM coupling.
---- Key points:
----   • Watches only the CURRENT Space (less noise, same behavior)
----   • No suspend/space watcher logic needed
----   • Overlays join all Spaces (original behavior), click-through
----   • Debounced redraws to play nicely with tilers (e.g., PaperWM)
----
---- Author: You 💪  | License: MIT
+local obj                  = {}
+obj.__index                = obj
 
-local obj = {}
-obj.__index = obj
-
-obj.name = "FocusMode"
-obj.version = "1.3.4"
-obj.author = "FocusMode Spoon"
-obj.homepage = "https://github.com/yourname/FocusMode.spoon"
+obj.name                   = "FocusMode"
+obj.version                = "0.0.1"
+obj.author                 = "Selim Acerbas"
+obj.homepage               = "https://github.com/selimacerbas/FocusMode.spoon"
+obj.license                = "MIT"
 
 -- ==========
 -- Settings (can be changed by users before :start())
 -- ==========
 
 --- Dim overlay opacity (0..1). 0.45 is a gentle shade; increase to dim more strongly.
-obj.dimAlpha = 0.45
+obj.dimAlpha               = 0.45
 
 --- Corner radius for undimmed windows (visual nicety). Set to 0 for sharp edges.
-obj.windowCornerRadius = 6
+obj.windowCornerRadius     = 6
 
 --- If true, the app under the mouse pointer is also undimmed (even if it isn't focused).
 --- (Renamed from `mouseUndim` → `mouseDim`; old key is still honored.)
-obj.mouseDim = true
+obj.mouseDim               = true
 
 --- Throttle for mouse move updates, in seconds (prevents excessive redraws).
-obj.mouseUpdateThrottle = 0.05
+obj.mouseUpdateThrottle    = 0.05
 
 --- Debounce for focus/move/resize event bursts (helps tilers like PaperWM settle frames)
-obj.eventSettleDelay = 0.03
+obj.eventSettleDelay       = 0.03
 
 --- If true, bind default hotkeys automatically when the Spoon is loaded.
 obj.autoBindDefaultHotkeys = true
 
 --- Default hotkeys (users can override with :bindHotkeys).
-obj.defaultHotkeys = {
+obj.defaultHotkeys         = {
     start = { { "ctrl", "alt", "cmd" }, "I" },
     stop  = { { "ctrl", "alt", "cmd" }, "O" },
 }
@@ -52,15 +43,15 @@ obj.defaultHotkeys = {
 -- Internals
 -- ==========
 
-obj._log = hs.logger.new("FocusMode", "info")
-obj._overlays = {}       -- screenUUID -> hs.canvas
-obj._wf = nil            -- hs.window.filter instance
-obj._screenWatcher = nil -- hs.screen.watcher
-obj._mouseTap = nil      -- hs.eventtap for mouse moved
-obj._mouseTimer = nil    -- throttle timer for mouse
-obj._redrawTimer = nil   -- debounce timer for redraw coalescing
-obj._menubar = nil       -- hs.menubar indicator
-obj._running = false
+obj._log                   = hs.logger.new("FocusMode", "info")
+obj._overlays              = {}  -- screenUUID -> hs.canvas
+obj._wf                    = nil -- hs.window.filter instance
+obj._screenWatcher         = nil -- hs.screen.watcher
+obj._mouseTap              = nil -- hs.eventtap for mouse moved
+obj._mouseTimer            = nil -- throttle timer for mouse
+obj._redrawTimer           = nil -- debounce timer for redraw coalescing
+obj._menubar               = nil -- hs.menubar indicator
+obj._running               = false
 
 -- Utility: shallow copy
 local function copy(t)
