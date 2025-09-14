@@ -7,6 +7,7 @@
 ---   • Watches only the CURRENT Space (less noise, same behavior)
 ---   • No suspend/space watcher logic needed
 ---   • Overlays join all Spaces (original behavior), click-through
+---   • Debounced redraws to play nicely with tilers (e.g., PaperWM)
 ---
 --- Author: You 💪  | License: MIT
 
@@ -14,7 +15,7 @@ local obj = {}
 obj.__index = obj
 
 obj.name = "FocusMode"
-obj.version = "1.3.3"
+obj.version = "1.3.4"
 obj.author = "FocusMode Spoon"
 obj.homepage = "https://github.com/yourname/FocusMode.spoon"
 
@@ -35,6 +36,9 @@ obj.mouseDim = true
 --- Throttle for mouse move updates, in seconds (prevents excessive redraws).
 obj.mouseUpdateThrottle = 0.05
 
+--- Debounce for focus/move/resize event bursts (helps tilers like PaperWM settle frames)
+obj.eventSettleDelay = 0.03
+
 --- If true, bind default hotkeys automatically when the Spoon is loaded.
 obj.autoBindDefaultHotkeys = true
 
@@ -53,7 +57,8 @@ obj._overlays = {}       -- screenUUID -> hs.canvas
 obj._wf = nil            -- hs.window.filter instance
 obj._screenWatcher = nil -- hs.screen.watcher
 obj._mouseTap = nil      -- hs.eventtap for mouse moved
-obj._mouseTimer = nil    -- throttle timer
+obj._mouseTimer = nil    -- throttle timer for mouse
+obj._redrawTimer = nil   -- debounce timer for redraw coalescing
 obj._menubar = nil       -- hs.menubar indicator
 obj._running = false
 
@@ -64,7 +69,7 @@ local function copy(t)
     return r
 end
 
--- Utility: is window standard & visible *and on-screen*
+-- Utility: is window standard & visible (compat: avoid isOnScreen on older HS)
 local function isValidWindow(w)
     if not w then return false end
     if not w:isStandard() then return false end
@@ -185,6 +190,18 @@ function obj:_computeHolesPerScreen()
     return holes
 end
 
+-- Debounced redraw scheduler (coalesce bursts from tilers into one repaint)
+function obj:_scheduleRedraw()
+    if self._redrawTimer then
+        self._redrawTimer:stop()
+        self._redrawTimer = nil
+    end
+    self._redrawTimer = hs.timer.doAfter(self.eventSettleDelay, function()
+        self._redrawTimer = nil
+        self:_redraw()
+    end)
+end
+
 -- Update canvas holes according to current focus & mouse state
 function obj:_redraw()
     if not self._running then return end
@@ -222,10 +239,10 @@ function obj:_redraw()
     end
 end
 
--- Mouse move handling (throttled); redraw to follow cursor without clicks
+-- Mouse move handling (throttled); schedule redraw to follow cursor without clicks
 function obj:_handleMouseMoved()
     if not self.mouseDim then return end
-    self:_redraw()
+    self:_scheduleRedraw()
 end
 
 function obj:_startWatchers()
@@ -242,7 +259,7 @@ function obj:_startWatchers()
     end
 
     local function onEvent()
-        self:_redraw()
+        self:_scheduleRedraw()
     end
 
     -- Subscribe (omit wf.windowsChanged — it's noisy and redundant here)
@@ -257,8 +274,7 @@ function obj:_startWatchers()
 
     -- Screen watcher (resolution/display changes)
     self._screenWatcher = hs.screen.watcher.new(function()
-        self:_ensureOverlays()
-        self:_redraw()
+        self:_scheduleRedraw()
     end)
     self._screenWatcher:start()
 
@@ -292,6 +308,10 @@ function obj:_stopWatchers()
         self._mouseTimer:stop()
         self._mouseTimer = nil
     end
+    if self._redrawTimer then
+        self._redrawTimer:stop()
+        self._redrawTimer = nil
+    end
 end
 
 function obj:_showMenubar()
@@ -307,7 +327,7 @@ function obj:_showMenubar()
                 title = "Mouse Dimming " .. (self.mouseDim and "✓" or "✗"),
                 fn = function()
                     self.mouseDim = not self.mouseDim
-                    self:_redraw()
+                    self:_scheduleRedraw()
                 end
             },
             { title = "Dim Opacity: " .. string.format("%.2f", self.dimAlpha), disabled = true },
@@ -315,14 +335,14 @@ function obj:_showMenubar()
                 title = "Brighter (+)",
                 fn = function()
                     self.dimAlpha = math.max(0.00, self.dimAlpha - 0.05)
-                    self:_redraw()
+                    self:_scheduleRedraw()
                 end
             },
             {
                 title = "Dimmer (−)",
                 fn = function()
                     self.dimAlpha = math.min(0.95, self.dimAlpha + 0.05)
-                    self:_redraw()
+                    self:_scheduleRedraw()
                 end
             },
             { title = "—", disabled = true },
@@ -355,7 +375,7 @@ function obj:start()
     self:_ensureOverlays()
     self:_startWatchers()
     self:_showMenubar()
-    self:_redraw()
+    self:_redraw() -- immediate first paint
     self._log.i("FocusMode started")
     return self
 end
