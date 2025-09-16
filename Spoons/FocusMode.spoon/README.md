@@ -9,6 +9,16 @@ A Hammerspoon Spoon that helps you stay in flow by **dimming everything except w
 > [CursorScope](https://github.com/selimacerbas/CursorScope.spoon)
 ---
 
+## 🎥 Demo
+
+### App Focus
+![App Focus](assets/app_focus.gif)
+
+### Mouse Dimming
+![Mouse Dimming](assets/mouse_dimming.gif)
+
+---
+
 ## ✨ Features
 
 * **Focus dimming**: all non-focused app windows are dimmed.
