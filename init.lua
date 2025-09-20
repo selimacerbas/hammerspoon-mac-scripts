@@ -42,199 +42,237 @@ spoon.CursorScope:configure({
 })
 spoon.CursorScope:bindHotkeys() -- ⌃⌥⌘Z start, ⌃⌥⌘U stop
 
-------------------------------------------------------------
--- SpoonInstall + PaperWM
-------------------------------------------------------------
-hs.loadSpoon("SpoonInstall")
 
-spoon.SpoonInstall.repos.PaperWM = {
-    url    = "https://github.com/mogenson/PaperWM.spoon",
-    desc   = "PaperWM.spoon repository",
-    branch = "release",
-}
-
-spoon.SpoonInstall:andUse("PaperWM", {
-    repo   = "PaperWM",
-    start  = true,
-    config = { screen_margin = 16, window_gap = 2 },
-    fn     = function(s)
-        PaperWM = s
-
-        -- (keep your Safari block as-is)
-        local function includeSafari()
-            s.window_filter:setAppFilter("Safari", {
-                visible      = true,
-                currentSpace = true,
-                fullscreen   = false,
-                allowRoles   = { "AXWindow" },
-            })
-        end
-        includeSafari()
-        local safariManaged = true
-
-        -- ① Bind defaults
-        s:bindHotkeys(s.default_hotkeys)
-
-        -- -- ② Make “half” the only width in the cycle list
-        s.window_ratios = { 1 / 2 } -- always snap to 50% when we cycle. (Doc: window_ratios)
-        --
-        --
-        -- -- ③ Auto-normalize new/visible windows to 50%
-        local A = s.actions.actions() -- PaperWM actions table (zero-arg functions)  -- uses API shown in repo README
-        local normalized = {}         -- remember which windows we've normalized
-
-        local function normalizeToHalf(win)
-            if not win then return end
-            local id = win:id()
-            if not id or normalized[id] then return end
-
-            -- only act on windows PaperWM actually manages
-            if not s.window_filter:isWindowAllowed(win) then return end -- hs.window.filter API
-
-            -- make sure PaperWM has (re)indexed windows before acting
-            s:refreshWindows() -- PaperWM API
-
-            -- give PaperWM a moment to anchor the window, then set it to 50%
-            hs.timer.doAfter(0.10, function()
-                local prev = hs.window.frontmostWindow()
-                win:focus()
-                A.cycle_width() -- with window_ratios={1/2}, one cycle => 50%
-                normalized[id] = true
-                if prev and prev:id() ~= id then prev:focus() end
-            end)
-        end
-
-        -- subscribe to relevant events from the spoon’s window_filter
-        s.window_filter:subscribe({
-            hs.window.filter.windowCreated,
-            hs.window.filter.windowVisible,
-        }, function(win)
-            -- slight debounce so PaperWM can see the window
-            hs.timer.doAfter(0.05, function() normalizeToHalf(win) end)
-        end)
-
-
-        -- Your existing helpers…
-        hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "R", A.refresh_windows)
-
-        hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "S", function()
-            if safariManaged then
-                s.window_filter:setAppFilter("Safari", false)
-                safariManaged = false
-                hs.alert.show("PaperWM: Safari EXCLUDED")
-            else
-                includeSafari()
-                safariManaged = true
-                hs.alert.show("PaperWM: Safari INCLUDED")
-            end
-            A.refresh_windows()
-        end)
-
-        -- Modal “Nav Mode” (keep as-is)
-        local nav = hs.hotkey.modal.new({ "cmd" }, "return")
-        local tip
-        function nav:entered() tip = hs.alert.show("PaperWM: NAV MODE  (Esc to exit)") end
-
-        function nav:exited() if tip then hs.alert.closeAll() end end
-
-        -- ——— Space-safe wrappers, This part is crucial with the integration of FocusMode ---
-        local function now() return hs.timer.secondsSinceEpoch() end
-        local lastMoveAt = 0
-
-        local function wrapMove(fn)
-            return function()
-                lastMoveAt = now()
-                -- optional: quiet FocusMode if it’s running
-                if _G.FocusMode and FocusMode._running and FocusMode._suspend then
-                    FocusMode:_suspend(1.2)
-                end
-                fn()                                      -- perform PaperWM move_window_N
-                hs.timer.doAfter(0.25, A.refresh_windows) -- let Mission Control settle, then refresh
-            end
-        end
-
-        local function withRefresh(fn)
-            return function()
-                local dt = now() - lastMoveAt
-                if dt < 1.0 then
-                    -- if this follows a move, give Spaces a tick before refreshing+focusing
-                    hs.timer.doAfter(0.15, function()
-                        A.refresh_windows(); fn()
-                    end)
-                else
-                    A.refresh_windows()
-                    fn()
-                end
-            end
-        end
-
-        local function wrapSwitch(fn)
-            return function()
-                fn()
-                hs.timer.doAfter(0.25, A.refresh_windows)
-            end
-        end
-        nav:bind({}, "escape", function() nav:exit() end)
-        nav:bind({ "cmd" }, "return", function() nav:exit() end)
-
-        nav:bind({}, "h", nil, withRefresh(A.focus_left), nil, withRefresh(A.focus_left))
-        nav:bind({}, "l", nil, withRefresh(A.focus_right), nil, withRefresh(A.focus_right))
-        nav:bind({}, "j", nil, withRefresh(A.focus_down), nil, withRefresh(A.focus_down))
-        nav:bind({}, "k", nil, withRefresh(A.focus_up), nil, withRefresh(A.focus_up))
-
-        nav:bind({ "shift" }, "h", nil, withRefresh(A.swap_left), nil, withRefresh(A.swap_left))
-        nav:bind({ "shift" }, "j", nil, withRefresh(A.swap_down), nil, withRefresh(A.swap_down))
-        nav:bind({ "shift" }, "k", nil, withRefresh(A.swap_up), nil, withRefresh(A.swap_up))
-        nav:bind({ "shift" }, "l", nil, withRefresh(A.swap_right), nil, withRefresh(A.swap_right))
-
-        nav:bind({}, "c", nil, A.center_window)
-        nav:bind({}, "f", nil, A.full_width)
-        nav:bind({}, "r", nil, A.cycle_width)
-
-        nav:bind({}, ",", nil, wrapSwitch(A.switch_space_l), wrapSwitch(A.switch_space_l))
-        nav:bind({}, ".", nil, wrapSwitch(A.switch_space_r), wrapSwitch(A.switch_space_r))
-        nav:bind({}, "1", nil, wrapSwitch(A.switch_space_1), wrapSwitch(A.switch_space_1))
-        nav:bind({}, "2", nil, wrapSwitch(A.switch_space_2), wrapSwitch(A.switch_space_2))
-        nav:bind({}, "3", nil, wrapSwitch(A.switch_space_3), wrapSwitch(A.switch_space_3))
-
-        nav:bind({ "shift" }, "1", nil, wrapMove(A.move_window_1), nil, wrapMove(A.move_window_1))
-        nav:bind({ "shift" }, "2", nil, wrapMove(A.move_window_2), nil, wrapMove(A.move_window_2))
-        nav:bind({ "shift" }, "3", nil, wrapMove(A.move_window_3), nil, wrapMove(A.move_window_3))
-    end
-})
 
 ------------------------------------------------------------
--- Helper to auto-install single-spoon repos (no docs.json)
+-- PaperWM via ensureSpoon (git) — pick branch in one place
+--
+-- No hotkeys. You manually set the branch below, then reload
+-- Hammerspoon (Cmd-Opt-Ctrl-R in your setup or from the menu).
+-- The helper clones/updates PaperWM on that branch and loads it.
 ------------------------------------------------------------
-local function ensureSpoon(name, gitURL, branch)
-    local spoondir = os.getenv("HOME") .. "/.hammerspoon/Spoons/"
-    local target   = spoondir .. name .. ".spoon"
-    if not hs.fs.attributes(target) then
-        hs.alert.show("Installing " .. name .. "…")
+
+------------------------------------------------------------
+-- 0) Choose your PaperWM branch here
+------------------------------------------------------------
+local PAPERWM_BRANCH = "main" -- change to "release" when you want
+
+------------------------------------------------------------
+-- 1) Generic git-based spoon installer/updater
+------------------------------------------------------------
+local HOME           = os.getenv("HOME")
+local SPOON_DIR      = HOME .. "/.hammerspoon/Spoons"
+
+local function exists(p)
+    return hs.fs.attributes(p) ~= nil
+end
+
+local function sh(cmd)
+    local out, ok, _, rc = hs.execute(cmd, true)
+    return (ok == true and rc == 0), (out or "")
+end
+
+-- ensureSpoonGit(name, url, opts)
+-- opts.branch (string): git branch to ensure
+-- opts.depth  (int|nil): default 1
+-- opts.reset  (bool): default true (hard reset to origin/<branch>)
+local function ensureSpoonGit(name, url, opts)
+    opts         = opts or {}
+    local branch = opts.branch or "main"
+    local depth  = opts.depth or 1
+    local reset  = (opts.reset ~= false)
+
+    local target = string.format("%s/%s.spoon", SPOON_DIR, name)
+    hs.fs.mkdir(SPOON_DIR)
+
+    if not exists(target) then
+        hs.alert.show("Installing " .. name .. " (" .. branch .. ")...")
         local cmd = string.format(
-            [[mkdir -p %q && /usr/bin/git clone --depth 1 %s %q %q]],
-            spoondir,
-            branch and ("-b " .. branch) or "",
-            gitURL,
-            target
+            [[/usr/bin/git clone --branch %q --depth %d %q %q]],
+            branch, depth, url, target
         )
-        -- normalize spaces
-        cmd = cmd:gsub("%s%s+", " ")
-        hs.execute(cmd)
+        local ok = sh(cmd)
+        if not ok then
+            hs.alert.show("Clone failed for " .. name)
+            return false
+        end
+    else
+        if not exists(target .. "/.git") then
+            -- replace non-git (e.g., a zipped SpoonInstall copy)
+            sh(string.format([[rm -rf %q]], target))
+            local ok = sh(string.format(
+                [[/usr/bin/git clone --branch %q --depth %d %q %q]],
+                branch, depth, url, target
+            ))
+            if not ok then
+                hs.alert.show("Re-clone failed for " .. name)
+                return false
+            end
+        else
+            -- update existing git checkout
+            sh(string.format([[/usr/bin/git -C %q remote set-url origin %q]], target, url))
+            sh(string.format([[/usr/bin/git -C %q fetch --prune origin]], target))
+            sh(string.format([[ /usr/bin/git -C %q checkout %q ]], target, branch))
+            if reset then
+                sh(string.format([[ /usr/bin/git -C %q reset --hard origin/%q ]], target, branch))
+            else
+                sh(string.format([[ /usr/bin/git -C %q pull --ff-only origin %q ]], target, branch))
+            end
+        end
+    end
+
+    -- log the exact build
+    local _, b = sh(string.format([[ /usr/bin/git -C %q rev-parse --abbrev-ref HEAD ]], target))
+    local _, c = sh(string.format([[ /usr/bin/git -C %q log -1 --pretty=%%h ]], target))
+    hs.printf("%s.spoon => branch=%s commit=%s", name, (b:gsub("$", "")), (c:gsub("$", "")))
+    return true
+end
+
+------------------------------------------------------------
+-- 2) PaperWM (from git) using the chosen branch
+------------------------------------------------------------
+local PAPERWM_REPO = "https://github.com/mogenson/PaperWM.spoon"
+local PAPERWM_NAME = "PaperWM"
+local PAPERWM_PATH = string.format("%s/%s.spoon", SPOON_DIR, PAPERWM_NAME)
+
+ensureSpoonGit(PAPERWM_NAME, PAPERWM_REPO, { branch = PAPERWM_BRANCH, depth = 1, reset = true })
+
+PaperWM               = hs.loadSpoon("PaperWM")
+
+-- Base config
+PaperWM.screen_margin = 16
+PaperWM.window_gap    = 2
+
+-- Exclude Safari from PaperWM management (and thus from PaperWM focus)
+-- Do this before start(); then refresh *after* start() when API is ready.
+PaperWM.window_filter:setAppFilter("Safari", false)
+
+-- Start it
+PaperWM:start()
+
+-- Now that PaperWM is started, its methods are available
+hs.timer.doAfter(0.05, function()
+    if PaperWM.refreshWindows then PaperWM:refreshWindows() end
+end)
+
+-- For visibility: say which branch is running
+hs.printf("PaperWM running from %s (branch=%s)", PAPERWM_PATH, PAPERWM_BRANCH)
+
+------------------------------------------------------------
+-- 3) Your existing PaperWM customizations (unchanged)
+------------------------------------------------------------
+local s = PaperWM -- alias for brevity
+
+
+-- 1) Bind defaults
+s:bindHotkeys(s.default_hotkeys)
+
+-- 2) Make "half" the only width in the cycle list
+s.window_ratios = { 1 / 2 }
+
+-- 3) Auto-normalize new/visible windows to 50%
+local A = s.actions.actions()
+local normalized = {}
+
+local function normalizeToHalf(win)
+    if not win then return end
+    local id = win:id()
+    if not id or normalized[id] then return end
+    if not s.window_filter:isWindowAllowed(win) then return end
+    s:refreshWindows()
+    hs.timer.doAfter(0.10, function()
+        local prev = hs.window.frontmostWindow()
+        win:focus(); A.cycle_width(); normalized[id] = true
+        if prev and prev:id() ~= id then prev:focus() end
+    end)
+end
+
+s.window_filter:subscribe({
+    hs.window.filter.windowCreated,
+    hs.window.filter.windowVisible,
+}, function(win)
+    hs.timer.doAfter(0.05, function() normalizeToHalf(win) end)
+end)
+
+-- Helpers
+hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "R", function() A.refresh_windows() end)
+
+-- Modal Nav Mode
+local nav = hs.hotkey.modal.new({ "cmd" }, "return")
+local tip
+function nav:entered() tip = hs.alert.show("PaperWM: NAV MODE  (Esc to exit)") end
+
+function nav:exited() if tip then hs.alert.closeAll() end end
+
+local function now() return hs.timer.secondsSinceEpoch() end
+local lastMoveAt = 0
+
+local function wrapMove(fn)
+    return function()
+        lastMoveAt = now()
+        if _G.FocusMode and FocusMode._running and FocusMode._suspend then
+            FocusMode:_suspend(1.2)
+        end
+        fn(); hs.timer.doAfter(0.25, A.refresh_windows)
     end
 end
-------------------------------------------------------------
--- Add-ons (auto-clone once, then load)
-------------------------------------------------------------
-ensureSpoon("ActiveSpace", "https://github.com/mogenson/ActiveSpace.spoon", "main")
-ActiveSpace = hs.loadSpoon("ActiveSpace")
--- ActiveSpace.compact = true -- uncomment if you prefer a tighter menubar display
-ActiveSpace:start()
 
-ensureSpoon("WarpMouse", "https://github.com/mogenson/WarpMouse.spoon", "main")
-WarpMouse = hs.loadSpoon("WarpMouse")
--- WarpMouse.margin = 8 -- optional: pixels beyond the edge before warp triggers
-WarpMouse:start()
+local function withRefresh(fn)
+    return function()
+        local dt = now() - lastMoveAt
+        if dt < 1.0 then
+            hs.timer.doAfter(0.15, function()
+                A.refresh_windows(); fn()
+            end)
+        else
+            A.refresh_windows(); fn()
+        end
+    end
+end
+
+local function wrapSwitch(fn)
+    return function()
+        fn(); hs.timer.doAfter(0.25, A.refresh_windows)
+    end
+end
+
+nav:bind({}, "escape", function() nav:exit() end)
+nav:bind({ "cmd" }, "return", function() nav:exit() end)
+
+nav:bind({}, "h", nil, withRefresh(A.focus_left), nil, withRefresh(A.focus_left))
+nav:bind({}, "l", nil, withRefresh(A.focus_right), nil, withRefresh(A.focus_right))
+nav:bind({}, "j", nil, withRefresh(A.focus_down), nil, withRefresh(A.focus_down))
+nav:bind({}, "k", nil, withRefresh(A.focus_up), nil, withRefresh(A.focus_up))
+
+nav:bind({ "shift" }, "h", nil, withRefresh(A.swap_left), nil, withRefresh(A.swap_left))
+nav:bind({ "shift" }, "j", nil, withRefresh(A.swap_down), nil, withRefresh(A.swap_down))
+nav:bind({ "shift" }, "k", nil, withRefresh(A.swap_up), nil, withRefresh(A.swap_up))
+nav:bind({ "shift" }, "l", nil, withRefresh(A.swap_right), nil, withRefresh(A.swap_right))
+
+nav:bind({}, "c", nil, A.center_window)
+nav:bind({}, "f", nil, A.full_width)
+nav:bind({}, "r", nil, A.cycle_width)
+
+nav:bind({}, ",", nil, wrapSwitch(A.switch_space_l), wrapSwitch(A.switch_space_l))
+nav:bind({}, ".", nil, wrapSwitch(A.switch_space_r), wrapSwitch(A.switch_space_r))
+nav:bind({}, "1", nil, wrapSwitch(A.switch_space_1), wrapSwitch(A.switch_space_1))
+nav:bind({}, "2", nil, wrapSwitch(A.switch_space_2), wrapSwitch(A.switch_space_2))
+nav:bind({}, "3", nil, wrapSwitch(A.switch_space_3), wrapSwitch(A.switch_space_3))
+
+nav:bind({ "shift" }, "1", nil, wrapMove(A.move_window_1), nil, wrapMove(A.move_window_1))
+nav:bind({ "shift" }, "2", nil, wrapMove(A.move_window_2), nil, wrapMove(A.move_window_2))
+nav:bind({ "shift" }, "3", nil, wrapMove(A.move_window_3), nil, wrapMove(A.move_window_3))
+
+------------------------------------------------------------
+-- 4) Optional: other spoons via ensureSpoonGit
+------------------------------------------------------------
+ensureSpoonGit("ActiveSpace", "https://github.com/mogenson/ActiveSpace.spoon", { branch = "main" })
+ActiveSpace = hs.loadSpoon("ActiveSpace"); ActiveSpace:start()
+
+ensureSpoonGit("WarpMouse", "https://github.com/mogenson/WarpMouse.spoon", { branch = "main" })
+WarpMouse = hs.loadSpoon("WarpMouse"); WarpMouse:start()
+
+
 
 ------------------------------------------------------------
 -- Tips (not code): macOS Mission Control settings
@@ -278,14 +316,3 @@ if hs.loadSpoon("Vifari") and spoon.Vifari then
 else
     hs.alert.show("Vifari spoon not found")
 end
-
--- Your hotkeys can stay as-is:
-hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "D", function()
-    hs.alert.show("Vifari Started")
-    spoon.Vifari:start()
-end)
-
-hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "S", function()
-    hs.alert.show("Vifari Stopped")
-    spoon.Vifari:stop()
-end)
