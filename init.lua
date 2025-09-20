@@ -111,10 +111,22 @@ local function ensureSpoonGit(name, url, opts)
     return true
 end
 
+-- === Soft reload (skip repo updates) ===
+local ENSURE_SKIP_KEY = "EnsureSpoons.skip"
+local skipEnsures = hs.settings.get(ENSURE_SKIP_KEY) == true
+if skipEnsures then hs.settings.set(ENSURE_SKIP_KEY, false) end
+
+-- Hotkey: Ctrl+Alt+Cmd+L → reload without updating any spoons
+hs.hotkey.bind({ "ctrl", "alt", "cmd" }, "L", function()
+    hs.settings.set(ENSURE_SKIP_KEY, true)
+    hs.alert.show("Reloading without updating spoons…")
+    hs.reload()
+end)
+
 ------------------------------------------------------------
 -- 1) FocusMode
 ------------------------------------------------------------
-ensureSpoonGit("FocusMode", "https://github.com/selimacerbas/FocusMode.spoon", { branch = "main" })
+ensureSpoonGit("FocusMode", "https://github.com/mogenson/FocusMode.spoon", { branch = "main" })
 FocusMode = hs.loadSpoon("FocusMode")
 
 FocusMode.dimAlpha = 0.5
@@ -129,7 +141,10 @@ FocusMode:start()
 ------------------------------------------------------------
 -- 2) CursorScope
 ------------------------------------------------------------
-ensureSpoonGit("CursorScope", "https://github.com/selimacerbas/CursorScope.spoon", { branch = "main" })
+if not skipEnsures then
+    ensureSpoonGit("CursorScope", "https://github.com/selimacerbas/CursorScope.spoon",
+        { branch = "main" })
+end
 CursorScope = hs.loadSpoon("CursorScope")
 CursorScope:configure({
     global = { fps = 60 },
@@ -148,40 +163,16 @@ CursorScope:configure({
     },
 })
 CursorScope:bindHotkeys()
-------------------------------------------------------------
--- 3) KeyCaster
-------------------------------------------------------------
-ensureSpoonGit("KeyCaster", "https://github.com/selimacerbas/KeyCaster.spoon", { branch = "main" })
-KeyCaster = hs.loadSpoon("KeyCaster")
-KeyCaster:configure({
-    mode                 = "line",
-    fadingDuration       = 2.0,
-    maxVisible           = 5,
-    minAlphaWhileVisible = 0.35,
-    followInterval       = 0.4,
-    box                  = { w = 260, h = 36, spacing = 8, corner = 10 },
-    position             = { corner = "bottomLeft", x = 20, y = 80 },
-    margin               = { right = 20, bottom = 80 },
-    font                 = { name = "Menlo", size = 18 },
-    column               = { maxCharsPerBox = 14, newBoxOnPause = 0.70 },
-    line                 = { box = { w = 420, h = 36, corner = 10 }, maxSegments = 60, gap = 6 },
-})
-KeyCaster:bindHotkeys(KeyCaster.defaultHotkeys)
 
 ------------------------------------------------------------
--- 4) Vifari
-------------------------------------------------------------
-ensureSpoonGit("Vifari", "https://github.com/dzirtusss/vifari", { branch = "main" })
-Vifari = hs.loadSpoon("Vifari"); Vifari:start()
-------------------------------------------------------------
--- 5) PaperWM
+-- 3) PaperWM
 ------------------------------------------------------------
 local PAPERWM_BRANCH = "main"
 local PAPERWM_REPO   = "https://github.com/mogenson/PaperWM.spoon"
 local PAPERWM_NAME   = "PaperWM"
 local PAPERWM_PATH   = string.format("%s/%s.spoon", SPOON_DIR, PAPERWM_NAME)
 
-ensureSpoonGit(PAPERWM_NAME, PAPERWM_REPO, { branch = PAPERWM_BRANCH, depth = 1, reset = true })
+if not skipEnsures then ensureSpoonGit(PAPERWM_NAME, PAPERWM_REPO, { branch = PAPERWM_BRANCH, depth = 1, reset = true }) end
 
 PaperWM               = hs.loadSpoon("PaperWM")
 PaperWM.screen_margin = 16
@@ -276,10 +267,48 @@ nav:bind({ "shift" }, "2", nil, wrapMove(A.move_window_2), nil, wrapMove(A.move_
 nav:bind({ "shift" }, "3", nil, wrapMove(A.move_window_3), nil, wrapMove(A.move_window_3))
 
 ------------------------------------------------------------
--- 6) ActiveSpace & WarpMouse
+-- 4) ActiveSpace & WarpMouse
 ------------------------------------------------------------
-ensureSpoonGit("ActiveSpace", "https://github.com/mogenson/ActiveSpace.spoon", { branch = "main" })
+if not skipEnsures then
+    ensureSpoonGit("ActiveSpace", "https://github.com/mogenson/ActiveSpace.spoon",
+        { branch = "main" })
+end
 ActiveSpace = hs.loadSpoon("ActiveSpace"); ActiveSpace:start()
 
-ensureSpoonGit("WarpMouse", "https://github.com/mogenson/WarpMouse.spoon", { branch = "main" })
+if not skipEnsures then ensureSpoonGit("WarpMouse", "https://github.com/mogenson/WarpMouse.spoon", { branch = "main" }) end
 WarpMouse = hs.loadSpoon("WarpMouse"); WarpMouse:start()
+
+------------------------------------------------------------
+-- 5) KeyCaster
+------------------------------------------------------------
+if not skipEnsures then
+    ensureSpoonGit("KeyCaster", "https://github.com/selimacerbas/KeyCaster.spoon",
+        { branch = "main" })
+end
+KeyCaster = hs.loadSpoon("KeyCaster")
+KeyCaster:configure({
+    mode                 = "column",
+    fadingDuration       = 2.0,
+    maxVisible           = 5,
+    minAlphaWhileVisible = 0.35,
+    followInterval       = 0.4,
+    box                  = { w = 260, h = 36, spacing = 8, corner = 10 },
+    position             = { corner = "bottomLeft", x = 20, y = 80 },
+    margin               = { right = 20, bottom = 80 },
+    font                 = { name = "Menlo", size = 18 },
+    column               = { maxCharsPerBox = 14, newBoxOnPause = 0.70 },
+    line                 = { box = { w = 420, h = 36, corner = 10 }, maxSegments = 60, gap = 6, fadeMode = "overflow", },
+})
+KeyCaster:bindHotkeys(KeyCaster.defaultHotkeys)
+
+------------------------------------------------------------
+-- 6) Vifari
+------------------------------------------------------------
+if not skipEnsures then ensureSpoonGit("Vifari", "https://github.com/dzirtusss/vifari", { branch = "main" }) end
+Vifari = hs.loadSpoon("Vifari"); Vifari:start()
+
+------------------------------------------------------------
+-- Tips: Mission Control settings
+-- - Uncheck: “Automatically rearrange Spaces based on most recent use”
+-- - Check:   “Displays have separate Spaces”
+------------------------------------------------------------

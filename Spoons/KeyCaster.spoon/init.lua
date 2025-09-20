@@ -3,7 +3,7 @@
 ---
 --- Modes:
 ---  * "column" (default): stack of boxes on the right edge of the current display. **Each box can contain multiple keystrokes**. A new box is started after a short pause or when a character-limit is reached. Boxes fade over time.
----  * "line": a **single** box on the right edge. Keystrokes append to the right; older ones fade and fall off from the left.
+---  * "line": a **single** box on the right edge. Keystrokes append to the right; older ones fall off from the left.
 ---
 --- Other features:
 ---  * Keeps the latest `maxVisible` entries at a minimum alpha until they fall out of the visible set
@@ -12,14 +12,14 @@
 ---  * Menubar indicator while active
 ---
 --- Notes:
----  * Listens to keyDown events only; does not display modifier-only transitions
+---  * Listens to keyDown events only; does not display modifier-only transitions (optional toggle below)
 ---  * Does not swallow events (your keystrokes still go to the focused app)
 
 local obj = {}
 obj.__index = obj
 
 obj.name = "KeyCaster"
-obj.version = "0.0.1"
+obj.version = "0.0.2"
 obj.author = "Selim Acerbas"
 obj.homepage = "https://www.github.com/selimacerbas/KeyCaster.spoon/"
 obj.license = "MIT"
@@ -30,7 +30,7 @@ obj.logger = hs.logger.new("KeyCaster", "info")
 -- ===============
 obj.config = {
     mode = "column",             -- "column" | "line"
-    fadingDuration = 2.0,        -- seconds to go from 1.0 alpha to minAlpha
+    fadingDuration = 2.0,        -- seconds to go from 1.0 alpha to minAlpha (used in time mode)
     maxVisible = 5,              -- keep last N at least minAlpha
     minAlphaWhileVisible = 0.35, -- clamp alpha for items still within maxVisible
     followInterval = 0.40,       -- seconds; reposition to the screen under mouse
@@ -46,8 +46,9 @@ obj.config = {
     -- Line mode visuals
     line = {
         box = { w = 520, h = 36, corner = 10 },
-        maxSegments = 60, -- hard cap on segments kept in memory
-        gap = 6,          -- px gap between segments
+        maxSegments = 60,      -- hard cap on segments kept in memory
+        gap = 6,               -- px gap between segments
+        fadeMode = "overflow", -- "overflow" (no time fade; drop when off-box) | "time"
     },
 
     font = { name = "Menlo", size = 18 }, -- default to Menlo (broadly available)
@@ -58,6 +59,12 @@ obj.config = {
         shadow = { red = 0, green = 0, blue = 0, alpha = 0.6 },
     },
     ignoreAutoRepeat = true,
+
+    -- Optional enhancements (disabled by default)
+    respectSecureInput = true,                                                    -- suppress in secure keyboard entry
+    appFilter = nil,                                                              -- e.g., { mode = "deny", bundleIDs = {"com.agilebits.onepassword7"} }
+    showModifierOnly = false,                                                     -- if true, show chords like ⌘⇧ when pressed without characters
+    showMouse = { enabled = false, radius = 14, fade = 0.6, strokeAlpha = 0.35 }, -- click bubbles
 }
 
 -- Default hotkeys
@@ -78,6 +85,8 @@ obj._followTimer = nil
 obj._menubar = nil
 obj._reverseKeycodes = nil
 obj._resolvedFont = nil
+obj._lineTimer = nil
+obj._mouseTap = nil
 
 -- ===============
 -- Utilities
@@ -428,31 +437,60 @@ function obj:_ensureLineCanvas()
     return cv
 end
 
+-- Trim-by-width: remove left segments only when needed (overflow mode)
+function obj:_trimLineByWidth()
+    local L = self.config.line
+    local marginX = 12
+    local gap = L.gap or 6
+
+    -- Compute how many segments fit in the visible width from right to left
+    local capacity = L.box.w - (marginX * 2)
+    local total = 0
+    for i = #self._segments, 1, -1 do
+        local seg = self._segments[i]
+        seg.width = seg.width or self:_measure(seg.text)
+        local add = (total == 0) and seg.width or (seg.width + gap)
+        if total + add > capacity then
+            -- Trim everything left of i (indices 1..(i-1))
+            for _ = 1, i - 1 do table.remove(self._segments, 1) end
+            break
+        else
+            total = total + add
+        end
+    end
+end
+
 function obj:_layoutLine()
     local L = self.config.line
     local font = self:_resolveFont()
     local marginX = 12
     local baselineY = 6
 
-    -- build from right to left
-    local totalW = marginX
     -- clear existing text elements (keep index 1 for bg)
     for i = #self._lineCanvas, 2, -1 do self._lineCanvas[i] = nil end
 
     local n = #self._segments
-    local visibleCount = 0
+    local totalW = marginX
+
     for i = n, 1, -1 do
         local seg = self._segments[i]
-        local aFloor = (i > n - self.config.maxVisible) and self.config.minAlphaWhileVisible or 0.0
-        local alpha = math.max(1.0 - seg.fadeProgress, aFloor)
-        if alpha <= 0.001 then goto continue end
+
+        -- Alpha logic: no time-based fade in "overflow" mode
+        local alpha
+        if (self.config.line.fadeMode == "time") then
+            local aFloor = (i > n - self.config.maxVisible) and self.config.minAlphaWhileVisible or 0.0
+            alpha = math.max(1.0 - seg.fadeProgress, aFloor)
+            if alpha <= 0.001 then goto continue end
+        else
+            alpha = 1.0
+        end
 
         local w = seg.width or self:_measure(seg.text)
         seg.width = w
         local xRight = L.box.w - marginX - totalW
         local x = xRight - w
         if x < marginX then
-            -- no more room; stop drawing older segments
+            -- Out of room; stop drawing older segments
             break
         end
 
@@ -463,11 +501,15 @@ function obj:_layoutLine()
             textFont = (font and font.name) or "Menlo",
             textAlignment = "left",
             frame = { x = x, y = baselineY, w = w, h = L.box.h - 12 },
-            textColor = { red = self.config.colors.text.red, green = self.config.colors.text.green, blue = self.config.colors.text.blue, alpha = alpha },
+            textColor = {
+                red = self.config.colors.text.red,
+                green = self.config.colors.text.green,
+                blue = self.config.colors.text.blue,
+                alpha = alpha
+            },
         })
 
         totalW = totalW + w + L.gap
-        visibleCount = visibleCount + 1
         ::continue::
     end
 
@@ -482,6 +524,10 @@ function obj:_tickLine()
     local step = 0.03
     if not self._lineTimer then
         self._lineTimer = hs.timer.doEvery(step, function()
+            if self.config.line.fadeMode == "overflow" then
+                -- No time-based fading; nothing to update here.
+                return
+            end
             local changed = false
             for _, seg in ipairs(self._segments) do
                 seg.fadeProgress = seg.fadeProgress + (step / self.config.fadingDuration)
@@ -501,10 +547,71 @@ function obj:_linePush(label)
     self:_ensureLineCanvas()
     local seg = { text = label, createdAt = now(), fadeProgress = 0 }
     table.insert(self._segments, seg)
+
     -- keep memory bounded
     local L = self.config.line
     while #self._segments > L.maxSegments do table.remove(self._segments, 1) end
+
+    -- If overflow mode, trim the left only when the row would overflow
+    if self.config.line.fadeMode == "overflow" then
+        seg.width = self:_measure(seg.text)
+        self:_trimLineByWidth()
+    end
+
     self:_layoutLine()
+end
+
+-- ===============
+-- Security / Filters / Optional Mouse Clicks
+-- ===============
+function obj:_secureInputActive()
+    return hs.eventtap.isSecureInputEnabled and hs.eventtap.isSecureInputEnabled() or false
+end
+
+function obj:_passesAppFilter()
+    local f = self.config.appFilter
+    if not f or not f.bundleIDs or #f.bundleIDs == 0 then return true end
+    local app = hs.application.frontmostApplication()
+    local bid = app and app:bundleID() or ""
+    local listed = false
+    for _, id in ipairs(f.bundleIDs) do
+        if id == bid then
+            listed = true; break
+        end
+    end
+    return (f.mode == "allow") and listed or (f.mode == "deny") and not listed
+end
+
+function obj:_flashClickAt(point, typ)
+    local C = self.config.showMouse
+    if not C or not C.enabled then return end
+    local r = C.radius or 14
+    local strokeA = C.strokeAlpha or 0.35
+    local fade = C.fade or 0.6
+
+    local color = { red = 1, green = 1, blue = 1, alpha = 0.35 }
+    if typ == hs.eventtap.event.types.rightMouseDown then
+        color = { red = 1, green = 0.6, blue = 0.2, alpha = 0.35 }
+    elseif typ == hs.eventtap.event.types.otherMouseDown then
+        color = { red = 0.3, green = 0.8, blue = 1, alpha = 0.35 }
+    end
+
+    local cv = hs.canvas.new({ x = point.x - r, y = point.y - r, w = r * 2, h = r * 2 })
+    cv:level(hs.canvas.windowLevels.overlay)
+    self:_applyBehaviors(cv)
+    cv[1] = { type = "circle", action = "fill", fillColor = color, strokeColor = { red = 1, green = 1, blue = 1, alpha = strokeA }, strokeWidth = 2 }
+    cv:show()
+
+    local created = now()
+    local t = hs.timer.doEvery(0.03, function()
+        local prog = (now() - created) / fade
+        if prog >= 1 then
+            t:stop(); cv:delete(); return
+        end
+        cv:alpha(1 - prog)
+        local grow = r * (0.2 * prog)
+        cv:frame({ x = point.x - r - grow, y = point.y - r - grow, w = (r + grow) * 2, h = (r + grow) * 2 })
+    end)
 end
 
 -- ===============
@@ -515,6 +622,31 @@ function obj:_handleKey(e)
         local isRepeat = e:getProperty(hs.eventtap.event.properties.keyboardEventAutorepeat)
         if isRepeat and isRepeat ~= 0 then return false end
     end
+
+    if self.config.respectSecureInput and self:_secureInputActive() then
+        if self._menubar then self._menubar:setTooltip("KeyCaster: suppressed (secure input)") end
+        return false
+    else
+        if self._menubar then self._menubar:setTooltip("KeyCaster: showing keystrokes") end
+    end
+
+    if not self:_passesAppFilter() then return false end
+
+    local chars = e:getCharacters(true) or ""
+    local hasNonModChar = #chars > 0
+    if self.config.showModifierOnly and not hasNonModChar then
+        local flags = e:getFlags()
+        local label = "" ..
+            (flags.cmd and "⌘" or "") ..
+            (flags.alt and "⌥" or "") ..
+            (flags.ctrl and "⌃" or "") ..
+            (flags.shift and "⇧" or "")
+        if #label > 0 then
+            if self.config.mode == "line" then self:_linePush(label) else self:_columnPush(label) end
+        end
+        return false
+    end
+
     local label = self:_formatLabel(e)
     if self.config.mode == "line" then
         self:_linePush(label)
@@ -553,6 +685,19 @@ function obj:start()
         self:_ensureLineCanvas(); self:_tickLine()
     end
 
+    if self.config.showMouse and self.config.showMouse.enabled and not self._mouseTap then
+        self._mouseTap = hs.eventtap.new({
+            hs.eventtap.event.types.leftMouseDown,
+            hs.eventtap.event.types.rightMouseDown,
+            hs.eventtap.event.types.otherMouseDown
+        }, function(evt)
+            local p = evt:location()
+            self:_flashClickAt(p, evt:getType())
+            return false
+        end)
+        self._mouseTap:start()
+    end
+
     self.logger.i("KeyCaster started")
     return self
 end
@@ -585,6 +730,10 @@ function obj:stop()
     end
     self._segments = {}
 
+    if self._mouseTap then
+        self._mouseTap:stop(); self._mouseTap = nil
+    end
+
     self.logger.i("KeyCaster stopped")
     return self
 end
@@ -605,6 +754,8 @@ function obj:configure(tbl)
     self._resolvedFont = nil -- force re-resolve if font changed
     if self._tap then        -- live adjustments
         if self.config.mode == "line" then
+            -- if font changed, clear cached widths
+            for _, seg in ipairs(self._segments) do seg.width = nil end
             self:_ensureLineCanvas(); self:_layoutLine()
         else
             self:_renderColumnPositions()
