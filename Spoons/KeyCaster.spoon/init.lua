@@ -21,7 +21,7 @@ obj.__index = obj
 obj.name = "KeyCaster"
 obj.version = "0.0.1"
 obj.author = "Selim Acerbas"
-obj.homepage = "https://www.hammerspoon.org/Spoons/"
+obj.homepage = "https://www.github.com/selimacerbas/KeyCaster.spoon/"
 obj.license = "MIT"
 obj.logger = hs.logger.new("KeyCaster", "info")
 
