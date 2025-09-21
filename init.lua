@@ -286,19 +286,6 @@ if not skipEnsures then
         { branch = "main" })
 end
 KeyCaster = hs.loadSpoon("KeyCaster")
-KeyCaster:configure({
-    mode                 = "column",
-    fadingDuration       = 2.0,
-    maxVisible           = 5,
-    minAlphaWhileVisible = 0.35,
-    followInterval       = 0.4,
-    box                  = { w = 260, h = 36, spacing = 8, corner = 10 },
-    position             = { corner = "bottomLeft", x = 20, y = 80 },
-    margin               = { right = 20, bottom = 80 },
-    font                 = { name = "Menlo", size = 18 },
-    column               = { maxCharsPerBox = 14, newBoxOnPause = 0.70 },
-    line                 = { box = { w = 420, h = 36, corner = 10 }, maxSegments = 60, gap = 6, fadeMode = "overflow", },
-})
 KeyCaster:bindHotkeys(KeyCaster.defaultHotkeys)
 
 ------------------------------------------------------------

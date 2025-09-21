@@ -19,7 +19,7 @@ local obj = {}
 obj.__index = obj
 
 obj.name = "KeyCaster"
-obj.version = "0.0.2"
+obj.version = "0.0.5"
 obj.author = "Selim Acerbas"
 obj.homepage = "https://www.github.com/selimacerbas/KeyCaster.spoon/"
 obj.license = "MIT"
@@ -37,10 +37,16 @@ obj.config = {
 
     -- Column mode visuals
     box = { w = 260, h = 36, spacing = 8, corner = 10 },
-    position = { corner = "bottomRight", x = 20, y = 80 },
+    position = { corner = "bottomRight", x = 20, y = 80 }, -- legacy corner-based placement
+    positionMode = "free",
+    positionFree = { x = 20, y = 80 },
     column = {
-        maxCharsPerBox = 14,   -- start a new box if current has this many glyphs
+        maxCharsPerBox = 14,   -- legacy fallback: start a new box after this many glyphs (used if fillMode="chars")
         newBoxOnPause  = 0.70, -- seconds of inactivity to start a new box
+        fillMode       = "measure", -- "measure" (preferred, uses pixel width) | "chars"
+        fillFactor     = 0.96, -- when measuring, start a new box once text width exceeds fillFactor * available width
+        hardGrouping   = true, -- keep each keystroke label intact; never split a label across boxes
+        groupJoiner    = "",   -- between labels when appending ("" = tight grouping, " " = spaced)
     },
 
     -- Line mode visuals
@@ -87,6 +93,12 @@ obj._reverseKeycodes = nil
 obj._resolvedFont = nil
 obj._lineTimer = nil
 obj._mouseTap = nil
+-- NEW: dragging state
+obj._dragTap = nil
+obj._drag = { active = false, offset = { x = 0, y = 0 } }
+-- Deterministic cross-display anchor (normalized)
+obj._lastScreenUUID = nil
+obj._norm = { x = 0.95, y = 0.85 }
 
 -- ===============
 -- Utilities
@@ -185,6 +197,41 @@ function obj:_currentScreen()
     return hs.mouse.getCurrentScreen() or hs.screen.mainScreen()
 end
 
+function obj:_currentScreenUUID()
+    local s = self:_currentScreen(); return s and s:getUUID() or ""
+end
+
+-- Keep a normalized anchor (0..1) so we can map across displays deterministically.
+function obj:_updateNormalized(boxW, boxH)
+    local scr = self:_currentScreen(); local f = scr:frame()
+    local pos = (self.config.positionMode == "free") and (self.config.positionFree or { x = f.x + 20, y = f.y + 80 }) or
+    (self.config.position or { x = f.x + 20, y = f.y + 80 })
+    local denomW = math.max(1, f.w - (boxW or 1))
+    local denomH = math.max(1, f.h - (boxH or 1))
+    self._norm.x = clamp((pos.x - f.x) / denomW, 0.0, 1.0)
+    self._norm.y = clamp((pos.y - f.y) / denomH, 0.0, 1.0)
+end
+
+-- Apply normalized anchor to set pixel positionFree for the current screen.
+function obj:_applyNormalized(boxW, boxH)
+    local scr = self:_currentScreen(); local f = scr:frame()
+    local x = f.x + self._norm.x * (f.w - boxW)
+    local y = f.y + self._norm.y * (f.h - boxH)
+    if self.config.positionMode ~= "free" then self.config.positionMode = "free" end
+    self.config.positionFree = self.config.positionFree or {}
+    self.config.positionFree.x = math.floor(x)
+    self.config.positionFree.y = math.floor(y)
+end
+
+-- Decide growth direction for the column stack based on Y relative to screen center
+function obj:_growthDirection()
+    local scr = self:_currentScreen(); local f = scr:frame()
+    local pos = (self.config.positionMode == "free") and (self.config.positionFree or { x = f.x + 20, y = f.y + 80 }) or
+    (self.config.position or { x = f.x + 20, y = f.y + 80 })
+    local midY = f.y + (f.h / 2)
+    return (pos.y <= midY) and "down" or "up"
+end
+
 function obj:_anchor()
     local pos    = self.config.position or { corner = "bottomRight", x = 20, y = 80 }
     local corner = string.lower(pos.corner or "bottomRight")
@@ -210,16 +257,20 @@ function obj:_anchor()
 end
 
 function obj:_baseFrameForIndex(i, boxW, boxH)
-    local ax, ay, corner = self:_anchor()
-    local x = (string.find(corner, "right", 1, true) and (ax - boxW)) or ax
+    local scr = self:_currentScreen(); local f = scr:frame()
+    local pos = (self.config.positionMode == "free") and (self.config.positionFree or { x = f.x + 20, y = f.y + 80 }) or
+    (self.config.position or { x = f.x + 20, y = f.y + 80 })
+    local x0 = clamp(math.floor(pos.x or (f.x + 20)), f.x, f.x + f.w - boxW)
+    local y0 = clamp(math.floor(pos.y or (f.y + 80)), f.y, f.y + f.h - boxH)
     local spacing = self.config.box.spacing or 8
+    local dir = self:_growthDirection()
     local y
-    if string.find(corner, "bottom", 1, true) then
-        y = ay - (boxH + spacing) * (i - 1) - boxH
+    if dir == "down" then
+        y = y0 + (boxH + spacing) * (i - 1)
     else
-        y = ay + (boxH + spacing) * (i - 1)
+        y = y0 - (boxH * i) - (spacing * (i - 1)) + boxH
     end
-    return { x = x, y = y, w = boxW, h = boxH }
+    return { x = x0, y = y, w = boxW, h = boxH }
 end
 
 -- ===============
@@ -230,8 +281,27 @@ function obj:_ensureMenubar(state)
         if not self._menubar then
             self._menubar = hs.menubar.new()
             if self._menubar then
-                self._menubar:setTitle("⌨︎")
-                self._menubar:setTooltip("KeyCaster: showing keystrokes")
+                self._menubar:setTitle("KC")
+                self._menubar:setTooltip("KeyCaster (" .. (self.config.mode or "column") .. ")")
+                self._menubar:setMenu(function()
+                    local active = (self._tap ~= nil)
+                    return {
+                        {
+                            title = "Mode",
+                            menu = {
+                                { title = "Column", checked = (self.config.mode == "column"), fn = function() self
+                                        :setMode("column") end },
+                                { title = "Line",   checked = (self.config.mode == "line"),   fn = function() self
+                                        :setMode("line") end },
+                            }
+                        },
+                        { title = "-" },
+                        {
+                            title = active and "Stop KeyCaster" or "Start KeyCaster",
+                            fn = function() if active then self:stop() else self:start() end end
+                        },
+                    }
+                end)
                 self._menubar:setMenu({ { title = "Stop KeyCaster", fn = function() self:stop() end }, })
             end
         end
@@ -241,6 +311,30 @@ function obj:_ensureMenubar(state)
             self._menubar = nil
         end
     end
+end
+
+-- Helper to refresh/update menubar contents at any time
+function obj:_refreshMenubar()
+    if not self._menubar then return end
+    self._menubar:setTitle("KC")
+    self._menubar:setTooltip("KeyCaster (" .. (self.config.mode or "column") .. ")")
+    self._menubar:setMenu(function()
+        local active = (self._tap ~= nil)
+        return {
+            {
+                title = "Mode",
+                menu = {
+                    { title = "Column", checked = (self.config.mode == "column"), fn = function() self:setMode("column") end },
+                    { title = "Line",   checked = (self.config.mode == "line"),   fn = function() self:setMode("line") end },
+                }
+            },
+            { title = "-" },
+            {
+                title = active and "Stop KeyCaster" or "Start KeyCaster",
+                fn = function() if active then self:stop() else self:start() end end
+            },
+        }
+    end)
 end
 
 -- ===============
@@ -390,17 +484,42 @@ function obj:_columnPush(label)
     local needNew = true
     if g and g.canvas then
         local paused = (t - (g.lastTouch or 0)) >= c.column.newBoxOnPause
-        local long   = (utf8.len(g.text or "") or #tostring(g.text or "")) >= c.column.maxCharsPerBox
-        needNew      = paused or long
+        local long
+        if c.column.fillMode == "measure" then
+            local paddingLR = 24 -- matches text frame { x=12, w=frame.w-24 }
+            local available = (c.box.w - paddingLR) * (c.column.fillFactor or 0.96)
+            local joiner = (c.column.groupJoiner ~= nil) and c.column.groupJoiner or " "
+            local candidate = (g.text and #g.text > 0) and (g.text .. joiner .. label) or label
+            local w = self:_measure(candidate)
+            long = (w > available)
+        else
+            long = (utf8.len(g.text or "") or #tostring(g.text or "")) >= c.column.maxCharsPerBox
+        end
+        needNew = paused or long
     end
 
     if needNew or (not g) then
         startNewBox()
     else
         -- append to existing
-        g.text = g.text .. " " .. label
-        g.lastTouch = t
-        g.canvas[2].text = g.text
+        local joiner = (c.column.groupJoiner ~= nil) and c.column.groupJoiner or " "
+        local candidate = (g.text and #g.text > 0) and (g.text .. joiner .. label) or label
+        if c.column.fillMode == "measure" then
+            local paddingLR = 24
+            local available = (c.box.w - paddingLR) * (c.column.fillFactor or 0.96)
+            local w = self:_measure(candidate)
+            if w > available then
+                startNewBox()
+            else
+                g.text = candidate
+                g.lastTouch = t
+                g.canvas[2].text = g.text
+            end
+        else
+            g.text = candidate
+            g.lastTouch = t
+            g.canvas[2].text = g.text
+        end
         g.canvas:show()
     end
 
@@ -513,10 +632,12 @@ function obj:_layoutLine()
         ::continue::
     end
 
-    -- position the single line canvas on the active display
-    local ax, ay, corner = self:_anchor()
-    local x = (string.find(corner, "right", 1, true) and (ax - L.box.w)) or ax
-    local y = (string.find(corner, "bottom", 1, true) and (ay - L.box.h)) or ay
+    -- position the single line canvas using free placement
+    local scr = self:_currentScreen(); local f = scr:frame()
+    local pos = (self.config.positionMode == "free") and (self.config.positionFree or { x = f.x + 20, y = f.y + 80 }) or
+    (self.config.position or { x = f.x + 20, y = f.y + 80 })
+    local x = clamp(pos.x or (f.x + 20), f.x, f.x + f.w - L.box.w)
+    local y = clamp(pos.y or (f.y + 80), f.y, f.y + f.h - L.box.h)
     self._lineCanvas:frame({ x = x, y = y, w = L.box.w, h = L.box.h })
 end
 
@@ -574,11 +695,9 @@ function obj:_passesAppFilter()
     local app = hs.application.frontmostApplication()
     local bid = app and app:bundleID() or ""
     local listed = false
-    for _, id in ipairs(f.bundleIDs) do
-        if id == bid then
+    for _, id in ipairs(f.bundleIDs) do if id == bid then
             listed = true; break
-        end
-    end
+        end end
     return (f.mode == "allow") and listed or (f.mode == "deny") and not listed
 end
 
@@ -617,6 +736,72 @@ end
 -- ===============
 -- Event handling
 -- ===============
+
+-- Drag (Cmd+Alt + left-drag) to move KeyCaster anywhere
+function obj:_ensureDragTap()
+    if self._dragTap then return end
+    self._dragTap = hs.eventtap.new({
+        hs.eventtap.event.types.leftMouseDown,
+        hs.eventtap.event.types.leftMouseDragged,
+        hs.eventtap.event.types.leftMouseUp,
+    }, function(evt)
+        local t = evt:getType(); local flags = evt:getFlags(); local loc = evt:location()
+        local needMods = (flags.cmd and flags.alt)
+        local function pointInFrame(p, fr)
+            return fr and p.x >= fr.x and p.x <= fr.x + fr.w and p.y >= fr.y and p.y <= fr.y + fr.h
+        end
+        local function currentBounds()
+            if self.config.mode == "line" and self._lineCanvas then return self._lineCanvas:frame() end
+            local minx, miny, maxx, maxy
+            for _, it in ipairs(self._items) do
+                if it.canvas then
+                    local fr = it.canvas:frame()
+                    minx = (not minx) and fr.x or math.min(minx, fr.x)
+                    miny = (not miny) and fr.y or math.min(miny, fr.y)
+                    maxx = (not maxx) and (fr.x + fr.w) or math.max(maxx, fr.x + fr.w)
+                    maxy = (not maxy) and (fr.y + fr.h) or math.max(maxy, fr.y + fr.h)
+                end
+            end
+            if minx then return { x = minx, y = miny, w = maxx - minx, h = maxy - miny } end
+            return nil
+        end
+        if t == hs.eventtap.event.types.leftMouseDown then
+            if not needMods then return false end
+            local fr = currentBounds()
+            if pointInFrame(loc, fr) then
+                local scr = self:_currentScreen(); local f = scr:frame()
+                local pos = (self.config.positionMode == "free") and (self.config.positionFree or { x = f.x + 20, y = f.y + 80 }) or
+                (self.config.position or { x = f.x + 20, y = f.y + 80 })
+                self._drag.active = true
+                self._drag.offset = { x = loc.x - (pos.x or 0), y = loc.y - (pos.y or 0) }
+                return false
+            end
+        elseif t == hs.eventtap.event.types.leftMouseDragged then
+            if self._drag.active then
+                local scr = self:_currentScreen(); local f = scr:frame()
+                local nx = clamp(loc.x - self._drag.offset.x, f.x, f.x + f.w - 20)
+                local ny = clamp(loc.y - self._drag.offset.y, f.y, f.y + f.h - 20)
+                if self.config.positionMode ~= "free" then self.config.positionMode = "free" end
+                self.config.positionFree = self.config.positionFree or {}
+                self.config.positionFree.x = nx; self.config.positionFree.y = ny
+                -- update normalized after drag
+                do
+                    local boxW = (self.config.mode == "line") and self.config.line.box.w or self.config.box.w
+                    local boxH = (self.config.mode == "line") and self.config.line.box.h or self.config.box.h
+                    self:_updateNormalized(boxW, boxH)
+                end
+                if self.config.mode == "line" then self:_layoutLine() else self:_renderColumnPositions() end
+                return false
+            end
+        elseif t == hs.eventtap.event.types.leftMouseUp then
+            self._drag.active = false
+            return false
+        end
+        return false
+    end)
+    self._dragTap:start()
+end
+
 function obj:_handleKey(e)
     if self.config.ignoreAutoRepeat then
         local isRepeat = e:getProperty(hs.eventtap.event.properties.keyboardEventAutorepeat)
@@ -654,12 +839,53 @@ function obj:_handleKey(e)
         self:_columnPush(label)
     end
     -- Reposition to current screen on every keystroke
-    if self.config.mode == "column" then
-        self:_renderColumnPositions()
-    else
-        self:_layoutLine()
+    if self.config.mode == "column" then self:_renderColumnPositions() else self:_layoutLine() end
+    -- refresh normalized position after any key-driven layout
+    do
+        local boxW = (self.config.mode == "line") and self.config.line.box.w or self.config.box.w
+        local boxH = (self.config.mode == "line") and self.config.line.box.h or self.config.box.h
+        self:_updateNormalized(boxW, boxH)
     end
     return false -- don't swallow the event
+end
+
+-- Add mode switcher callable from the menubar
+function obj:setMode(mode)
+    mode = string.lower(tostring(mode or ""))
+    if mode ~= "column" and mode ~= "line" then return self end
+    if self.config.mode == mode then return self end
+
+    if mode == "line" then
+        -- clear column UI
+        for i = #self._items, 1, -1 do
+            local it = self._items[i]
+            if it.timer then it.timer:stop() end
+            if it.canvas then it.canvas:delete() end
+            table.remove(self._items, i)
+        end
+        self._items = {}; self._currentGroup = nil
+        -- init line UI
+        self:_ensureLineCanvas(); self:_tickLine(); self:_layoutLine()
+    else
+        -- clear line UI
+        if self._lineTimer then
+            self._lineTimer:stop(); self._lineTimer = nil
+        end
+        if self._lineCanvas then
+            self._lineCanvas:delete(); self._lineCanvas = nil
+        end
+        self._segments = {}
+        -- render columns (if any)
+        self:_renderColumnPositions()
+    end
+
+    self.config.mode = mode
+    local boxW = (mode == "line") and self.config.line.box.w or self.config.box.w
+    local boxH = (mode == "line") and self.config.line.box.h or self.config.box.h
+    self:_updateNormalized(boxW, boxH)
+    if self._menubar then self._menubar:setTooltip("KeyCaster (" .. mode .. ")") end
+    self:_refreshMenubar()
+    return self
 end
 
 -- ===============
@@ -667,8 +893,7 @@ end
 -- ===============
 function obj:start()
     if self._tap then return self end
-    self:_buildReverseKeycodes()
-    self:_resolveFont()
+    self:_buildReverseKeycodes(); self:_resolveFont()
 
     self._tap = hs.eventtap.new({ hs.eventtap.event.types.keyDown }, function(e)
         local ok, err = pcall(function() self:_handleKey(e) end)
@@ -678,12 +903,30 @@ function obj:start()
     self._tap:start()
 
     self:_ensureMenubar(true)
+    self:_refreshMenubar()
     self._followTimer = hs.timer.doEvery(self.config.followInterval, function()
+        local boxW = (self.config.mode == "line") and self.config.line.box.w or self.config.box.w
+        local boxH = (self.config.mode == "line") and self.config.line.box.h or self.config.box.h
+        local cur = self:_currentScreenUUID()
+        if self._lastScreenUUID ~= cur then
+            self:_applyNormalized(boxW, boxH)
+            self._lastScreenUUID = cur
+        end
         if self.config.mode == "column" then self:_renderColumnPositions() else self:_layoutLine() end
     end)
     if self.config.mode == "line" then
         self:_ensureLineCanvas(); self:_tickLine()
     end
+    -- initialize normalization
+    do
+        local boxW = (self.config.mode == "line") and self.config.line.box.w or self.config.box.w
+        local boxH = (self.config.mode == "line") and self.config.line.box.h or self.config.box.h
+        self:_updateNormalized(boxW, boxH)
+        self._lastScreenUUID = self:_currentScreenUUID()
+    end
+
+    -- enable dragging
+    self:_ensureDragTap()
 
     if self.config.showMouse and self.config.showMouse.enabled and not self._mouseTap then
         self._mouseTap = hs.eventtap.new({
@@ -691,37 +934,32 @@ function obj:start()
             hs.eventtap.event.types.rightMouseDown,
             hs.eventtap.event.types.otherMouseDown
         }, function(evt)
-            local p = evt:location()
-            self:_flashClickAt(p, evt:getType())
-            return false
+            local p = evt:location(); self:_flashClickAt(p, evt:getType()); return false
         end)
         self._mouseTap:start()
     end
 
-    self.logger.i("KeyCaster started")
-    return self
+    self.logger.i("KeyCaster started"); return self
 end
 
 function obj:stop()
     if self._tap then
-        self._tap:stop()
-        self._tap = nil
+        self._tap:stop(); self._tap = nil
     end
     if self._followTimer then
-        self._followTimer:stop()
-        self._followTimer = nil
+        self._followTimer:stop(); self._followTimer = nil
+    end
+    if self._dragTap then
+        self._dragTap:stop(); self._dragTap = nil
     end
     self:_ensureMenubar(false)
 
-    -- COLUMN cleanup
     for i = #self._items, 1, -1 do
         local it = self._items[i]; if it.timer then it.timer:stop() end; if it.canvas then it.canvas:delete() end; table
             .remove(self._items, i)
     end
-    self._items = {}
-    self._currentGroup = nil
+    self._items = {}; self._currentGroup = nil
 
-    -- LINE cleanup
     if self._lineTimer then
         self._lineTimer:stop(); self._lineTimer = nil
     end
@@ -734,8 +972,7 @@ function obj:stop()
         self._mouseTap:stop(); self._mouseTap = nil
     end
 
-    self.logger.i("KeyCaster stopped")
-    return self
+    self.logger.i("KeyCaster stopped"); return self
 end
 
 function obj:bindHotkeys(mapping)
@@ -750,16 +987,19 @@ function obj:configure(tbl)
     local merged = shallowCopy(self.config)
     for k, v in pairs(tbl) do merged[k] = v end
     self.config = merged
-    -- normalize some derived bits
-    self._resolvedFont = nil -- force re-resolve if font changed
-    if self._tap then        -- live adjustments
+
+    -- ensure free position table exists if in free mode
+    if self.config.positionMode == "free" then
+        self.config.positionFree = self.config.positionFree or { x = 20, y = 80 }
+    end
+
+    self._resolvedFont = nil
+    for _, seg in ipairs(self._segments) do seg.width = nil end
+
+    if self._tap then
         if self.config.mode == "line" then
-            -- if font changed, clear cached widths
-            for _, seg in ipairs(self._segments) do seg.width = nil end
             self:_ensureLineCanvas(); self:_layoutLine()
-        else
-            self:_renderColumnPositions()
-        end
+        else self:_renderColumnPositions() end
     end
     return self
 end
