@@ -146,22 +146,6 @@ if not skipEnsures then
         { branch = "main" })
 end
 CursorScope = hs.loadSpoon("CursorScope")
-CursorScope:configure({
-    global = { fps = 60 },
-    cursor = {
-        shape = "ring",
-        radius = 32,
-        idleColor = { red = 0.2, green = 1, blue = 0.2, alpha = 0.9 },
-        clickColor = { red = 1, green = 0.3, blue = 0.1, alpha = 1.0 },
-    },
-    scope = {
-        enabled  = true,
-        shape    = "rectangle",
-        size     = 400,
-        zoom     = 2.5,
-        position = { corner = "topLeft", x = 24, y = 24 },
-    },
-})
 CursorScope:bindHotkeys()
 
 ------------------------------------------------------------
