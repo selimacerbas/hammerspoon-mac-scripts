@@ -19,7 +19,7 @@ https://github.com/mogenson/PaperWM.spoon ~/.hammerspoon/Spoons/PaperWM.spoon`.
 "Mission Control", then uncheck "Automatically rearrange Spaces based on most
 recent use" and check "Displays have separate Spaces".
 
-<img width="780" alt="Screenshot of macOS settings" src="https://github.com/user-attachments/assets/b0842c44-2a3b-43fc-85eb-66729cd7f8db">
+<img width="780" src="https://github.com/user-attachments/assets/b0842c44-2a3b-43fc-85eb-66729cd7f8db">
 
 ### Install with [SpoonInstall](https://www.hammerspoon.org/Spoons/SpoonInstall.html)
 
@@ -37,7 +37,7 @@ spoon.SpoonInstall:andUse("PaperWM", {
     config = { screen_margin = 16, window_gap = 2 },
     start = true,
     hotkeys = {
-		< see below >
+        < see below >
     }
 })
 ```
@@ -66,12 +66,6 @@ PaperWM:bindHotkeys({
     swap_up    = {{"alt", "cmd", "shift"}, "up"},
     swap_down  = {{"alt", "cmd", "shift"}, "down"},
 
-    -- alternative: swap entire columns, rather than
-    -- individual windows (to be used instead of
-    -- swap_left / swap_right bindings)
-    -- swap_column_left = {{"alt", "cmd", "shift"}, "left"},
-    -- swap_column_right = {{"alt", "cmd", "shift"}, "right"},
-
     -- position and resize focused window
     center_window        = {{"alt", "cmd"}, "c"},
     full_width           = {{"alt", "cmd"}, "f"},
@@ -90,6 +84,8 @@ PaperWM:bindHotkeys({
 
     -- move the focused window into / out of the tiling layer
     toggle_floating = {{"alt", "cmd", "shift"}, "escape"},
+    -- raise all floating windows on top of tiled windows
+    focus_floating  = {{"alt", "cmd", "shift"}, "f"},
 
     -- focus the first / second / etc window in the current space
     focus_window_1 = {{"cmd", "shift"}, "1"},
@@ -149,6 +145,9 @@ modal:bind({}, "h", nil, actions.focus_left)
 modal:bind({}, "j", nil, actions.focus_down)
 modal:bind({}, "k", nil, actions.focus_up)
 modal:bind({}, "l", nil, actions.focus_right)
+modal:bind({}, "escape", function() modal:exit() end)
+
+PaperWM:start()
 ```
 
 `PaperWM:start()` will begin automatically tiling new and existing windows.
@@ -166,16 +165,40 @@ PaperWM.window_gap = 10
 PaperWM.window_gap  =  { top = 10, bottom = 8, left = 12, right = 12 }
 ```
 
+Third-party tools like [Sketchybar](https://github.com/felixkratz/sketchybar) 
+can be used to create custom status bars and/or dock. Set `PaperWM.external_bar` 
+to the to a table specifying `top`, `bottom` in number of pixels of your bar
+and dock to ensure consistent window placement on displays with and without a "notch".
+
+For example:
+
+```lua
+-- Add 40px offset for an external status bar
+PaperWM.external_bar = {top = 40}
+-- or, add 20px offset for an external status bar and 40px offset for an external dock
+PaperWM.external_bar = {top = 20, bottom = 40}
+```
+
 Configure the `PaperWM.window_filter` to set which apps and screens are managed.
 For example:
 
 ```lua
 -- ignore a specific app
 PaperWM.window_filter:rejectApp("iStat Menus Status")
+-- ignore a specific window of an app
+PaperWM.window_filter:setAppFilter("iTunes", { rejectTitles = "MiniPlayer" })
 -- list of screens to tile (use % to escape string match characters, like -)
 PaperWM.window_filter:setScreens({ "Built%-in Retina Display" })
 -- restart for new window filter to take effect
 PaperWM:start()
+```
+
+Set `PaperWM.center_mouse` to control whether the mouse cursor is centered on
+the screen after switching spaces. Default is `true`. Example:
+
+```lua
+-- disable mouse centering when switching spaces
+PaperWM.center_mouse = false
 ```
 
 Set `PaperWM.window_ratios` to the ratios to cycle window widths and heights
@@ -222,6 +245,21 @@ PaperWM.drag_window = { "alt", "cmd" }`
 PaperWM.lift_window = { "alt", "cmd", "shift" }
 ```
 
+### Mouse Scrolling
+
+Spin the mouse scroll wheel while holding the `PaperWM.scroll_window` hotkey to
+slide all windows on a space left or right. Release the hotkey to stop. Change
+`PaperWM.scroll_gain` to a positive or negative number to adjust the direction
+and sensitivity.
+
+```lua
+-- set to a table of modifier keys to enable window scroling, default is nil
+PaperWM.scroll_window = { "alt", "cmd" }`
+
+-- increase move windows further when scrolling, invert to change direction
+PaperWM.scroll_gain = 10.0
+```
+
 ## Limitations
 
 MacOS does not allow a window to be moved fully off-screen. Windows that would
@@ -236,15 +274,19 @@ Arrange screens vertically to prevent windows from bleeding into other screens.
 Use [WarpMouse.spoon](https://github.com/mogenson/WarpMouse.spoon) to simulate
 side-by-side screens.
 
-<img width="780" alt="Screen Shot 2022-01-07 at 14 18 27" src="https://user-images.githubusercontent.com/900731/148595785-546f9086-9add-4731-8477-233b202378f4.png">
+<img width="780" src="https://user-images.githubusercontent.com/900731/148595785-546f9086-9add-4731-8477-233b202378f4.png">
 
 ## Add-ons
 
 The following spoons compliment PaperWM.spoon nicely.
 
-- [ActiveSpace.spoon](https://github.com/mogenson/ActiveSpace.spoon) Show active and layout of Mission Control spaces in the menu bar.
-- [WarpMouse.spoon](https://github.com/mogenson/WarpMouse.spoon) Move mouse cursor between screen edges to simulate side-by-side screens.
-- [Swipe.spoon](https://github.com/mogenson/Swipe.spoon) Perform actions when trackpad swipe gestures are recognized. Here's an example config to change PaperWM.spoon focused window:
+- [ActiveSpace.spoon](https://github.com/mogenson/ActiveSpace.spoon) Show active
+and layout of Mission Control spaces in the menu bar.
+- [WarpMouse.spoon](https://github.com/mogenson/WarpMouse.spoon) Move mouse
+cursor between screen edges to simulate side-by-side screens.
+- [Swipe.spoon](https://github.com/mogenson/Swipe.spoon) Perform actions when
+trackpad swipe gestures are recognized. Here's an example config to change
+PaperWM.spoon focused window:
 ```lua
 -- focus adjacent window with 3 finger swipe
 local actions = PaperWM.actions.actions()
@@ -272,7 +314,8 @@ Swipe:start(3, function(direction, distance, id)
     end
 end)
 ```
-- [FocusMode.spoon](https://github.com/selimacerbas/FocusMode.spoon) Helps you stay in flow by dimming everything except what you’re working on.
+- [FocusMode.spoon](https://github.com/selimacerbas/FocusMode.spoon) Helps you
+stay in flow by dimming everything except what you’re working on.
 
 ## Contributing
 
@@ -281,8 +324,12 @@ Contributions are welcome! Here are a few preferences:
 - Local variables are `snake_case` (eg. `local focused_window`)
 - Function names are `camelCase` (eg. `function windowEventHandler()`)
 - Use `<const>` where possible
-- Create a local copy when deeply nested members are used often (eg. `local Watcher <const> = hs.uielement.watcher`)
+- Create a local copy when deeply nested members are used often (eg. `local
+Watcher <const> = hs.uielement.watcher`)
 
 Code format checking and linting is provided by
 [lua-language-server](https://github.com/LuaLS/lua-language-server) for commits
 and pull requests. Run `lua-language-server --check .` locally before commiting.
+
+[Busted](https://lunarmodules.github.io/busted/) is used for unit testing. Run
+`busted` from the repo root to run tests locally.

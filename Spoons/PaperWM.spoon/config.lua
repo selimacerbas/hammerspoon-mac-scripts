@@ -9,6 +9,7 @@ Config.default_hotkeys = {
     refresh_windows      = { { "alt", "cmd", "shift" }, "r" },
     dump_state           = { { "alt", "cmd", "shift" }, "d" },
     toggle_floating      = { { "alt", "cmd", "shift" }, "escape" },
+    focus_floating       = { { "alt", "cmd", "shift" }, "f" },
     focus_left           = { { "alt", "cmd" }, "left" },
     focus_right          = { { "alt", "cmd" }, "right" },
     focus_up             = { { "alt", "cmd" }, "up" },
@@ -54,6 +55,8 @@ Config.window_filter = WindowFilter.new():setOverrideFilter({
     hasTitlebar = true,
     allowRoles = "AXStandardWindow",
 })
+---external bar: make space for external menu bar
+Config.external_bar = nil ---@type {top: number?, bottom: number?}?
 
 ---window gaps: can be set as a single number or a table with top, bottom, left, right values
 Config.window_gap = 8 ---@type number|{ top: number, bottom: number, left: number, right: number }
@@ -69,5 +72,20 @@ Config.swipe_fingers = 0 ---@type number
 
 ---increase this number to make windows move futher when swiping
 Config.swipe_gain = 1 ---@type number
+
+---set to a table of modifier keys to enable window dragging
+Config.drag_window = nil ---@type string[]? e.g. { "alt", "cmd" }`
+
+---set to a table of modifier keys to enable window lifting
+Config.lift_window = nil ---@type string[]? e.g. { "alt", "cmd", "shift" }
+
+---set to a table of modifier keys to enable mouse scrolling
+Config.scroll_window = nil ---@type string[]? e.g. { "alt", "cmd" }
+
+---increase to move windows further when scrolling, negate to invert direction
+Config.scroll_gain = 10 ---@type number
+
+---center mouse cursor on screen after switching spaces
+Config.center_mouse = true ---@type boolean
 
 return Config
