@@ -101,8 +101,8 @@ local function ensureSpoonGit(name, url, opts)
 	-- Log the exact build
 	local _, b = sh(string.format([[ /usr/bin/git -C %q rev-parse --abbrev-ref HEAD ]], target))
 	local _, c = sh(string.format([[ /usr/bin/git -C %q log -1 --pretty=%%h ]], target))
-	b = (b or ""):gsub("$", "")
-	c = (c or ""):gsub("$", "")
+	b = (b or ""):gsub("%s+$", "")
+	c = (c or ""):gsub("%s+$", "")
 	hs.printf("%s.spoon => branch=%s commit=%s", name, b, c)
 	return true
 end
@@ -124,7 +124,9 @@ end)
 ------------------------------------------------------------
 -- 1) FocusMode
 ------------------------------------------------------------
-ensureSpoonGit("FocusMode", "https://github.com/mogenson/FocusMode.spoon", { branch = "main" })
+if not skipEnsures then
+	ensureSpoonGit("FocusMode", "https://github.com/selimacerbas/FocusMode.spoon", { branch = "main" })
+end
 FocusMode = hs.loadSpoon("FocusMode")
 
 FocusMode.dimAlpha = 0.5
@@ -187,12 +189,12 @@ local function normalizeToHalf(win)
 	if not s.window_filter:isWindowAllowed(win) then
 		return
 	end
+	normalized[id] = true -- Mark immediately to prevent duplicate triggers
 	s:refreshWindows()
 	hs.timer.doAfter(0.10, function()
 		local prev = hs.window.frontmostWindow()
 		win:focus()
 		A.cycle_width()
-		normalized[id] = true
 		if prev and prev:id() ~= id then
 			prev:focus()
 		end
@@ -217,6 +219,7 @@ end
 function nav:exited()
 	if tip then
 		hs.alert.closeAll()
+		tip = nil
 	end
 end
 
@@ -227,8 +230,8 @@ local lastMoveAt = 0
 local function wrapMove(fn)
 	return function()
 		lastMoveAt = now()
-		if _G.FocusMode and FocusMode._running and FocusMode._suspend then
-			FocusMode:_suspend(1.2)
+		if _G.FocusMode and _G.FocusMode._running and _G.FocusMode._suspendFor then
+			_G.FocusMode:_suspendFor(1.2)
 		end
 		fn()
 		hs.timer.doAfter(0.25, A.refresh_windows)
