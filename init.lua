@@ -223,34 +223,14 @@ function nav:exited()
 	end
 end
 
-local function now()
-	return hs.timer.secondsSinceEpoch()
-end
-local lastMoveAt = 0
+-- wrapMove: for cross-space moves (async Spaces API needs a beat before retile)
 local function wrapMove(fn)
 	return function()
-		lastMoveAt = now()
-		if _G.FocusMode and _G.FocusMode._running and _G.FocusMode._suspendFor then
-			_G.FocusMode:_suspendFor(1.2)
-		end
 		fn()
 		hs.timer.doAfter(0.25, A.refresh_windows)
 	end
 end
-local function withRefresh(fn)
-	return function()
-		local dt = now() - lastMoveAt
-		if dt < 1.0 then
-			hs.timer.doAfter(0.15, function()
-				A.refresh_windows()
-				fn()
-			end)
-		else
-			A.refresh_windows()
-			fn()
-		end
-	end
-end
+-- wrapSwitch: for space switching (Mission Control is async)
 local function wrapSwitch(fn)
 	return function()
 		fn()
@@ -264,14 +244,15 @@ end)
 nav:bind({ "cmd" }, "return", function()
 	nav:exit()
 end)
-nav:bind({}, "h", nil, withRefresh(A.focus_left), nil, withRefresh(A.focus_left))
-nav:bind({}, "l", nil, withRefresh(A.focus_right), nil, withRefresh(A.focus_right))
-nav:bind({}, "j", nil, withRefresh(A.focus_down), nil, withRefresh(A.focus_down))
-nav:bind({}, "k", nil, withRefresh(A.focus_up), nil, withRefresh(A.focus_up))
-nav:bind({ "shift" }, "h", nil, withRefresh(A.swap_left), nil, withRefresh(A.swap_left))
-nav:bind({ "shift" }, "j", nil, withRefresh(A.swap_down), nil, withRefresh(A.swap_down))
-nav:bind({ "shift" }, "k", nil, withRefresh(A.swap_up), nil, withRefresh(A.swap_up))
-nav:bind({ "shift" }, "l", nil, withRefresh(A.swap_right), nil, withRefresh(A.swap_right))
+-- Focus/swap: direct calls, no wrapper needed (these don't use Spaces APIs)
+nav:bind({}, "h", nil, A.focus_left, nil, A.focus_left)
+nav:bind({}, "l", nil, A.focus_right, nil, A.focus_right)
+nav:bind({}, "j", nil, A.focus_down, nil, A.focus_down)
+nav:bind({}, "k", nil, A.focus_up, nil, A.focus_up)
+nav:bind({ "shift" }, "h", nil, A.swap_left, nil, A.swap_left)
+nav:bind({ "shift" }, "j", nil, A.swap_down, nil, A.swap_down)
+nav:bind({ "shift" }, "k", nil, A.swap_up, nil, A.swap_up)
+nav:bind({ "shift" }, "l", nil, A.swap_right, nil, A.swap_right)
 nav:bind({}, "c", nil, A.center_window)
 nav:bind({}, "f", nil, A.full_width)
 nav:bind({}, "r", nil, A.cycle_width)
