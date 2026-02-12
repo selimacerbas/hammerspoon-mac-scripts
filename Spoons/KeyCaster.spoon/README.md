@@ -225,6 +225,36 @@ spoon.KeyCaster:bindHotkeys({
 
 ---
 
+## Customizing Key Symbols
+
+KeyCaster lets you override the displayed symbol for any key by modifying `spoon.KeyCaster.specialKeys` or `spoon.KeyCaster.punctuationKeys` **before** calling `:start()`.
+
+```lua
+hs.loadSpoon("KeyCaster")
+
+-- Override default symbols
+spoon.KeyCaster.specialKeys["return"] = "⏎"   -- change ↩︎ to alternative
+spoon.KeyCaster.specialKeys["left"]   = "◀"   -- triangle arrow
+spoon.KeyCaster.specialKeys["right"]  = "▶"
+
+-- Add keys not in defaults
+spoon.KeyCaster.specialKeys["f19"]  = "✧"     -- Hyper key
+spoon.KeyCaster.specialKeys["kana"] = "あ"    -- JIS keyboard
+
+spoon.KeyCaster:start()
+```
+
+**Available tables:**
+
+| Table             | Keys                                                |
+| ----------------- | --------------------------------------------------- |
+| `specialKeys`     | return, enter, escape, tab, space, delete, arrows, page up/down, home, end |
+| `punctuationKeys` | comma, period, slash, backslash, grave, quote, semicolon, minus, equal, brackets |
+
+Both tables can be freely modified to match your preferences or keyboard layout.
+
+---
+
 ## Examples
 
 ### 1) Column mode with tight grouping (default)

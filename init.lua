@@ -17,6 +17,10 @@ end
 -- opts.branch (string): git branch to ensure
 -- opts.depth  (int|nil): default 1
 -- opts.reset  (bool): default true (hard reset to origin/<branch>)
+--
+-- If the spoon is already cloned, git updates run in the background
+-- so a slow/hanging fetch never blocks Hammerspoon from loading.
+-- Fresh clones still run synchronously (files must exist before loadSpoon).
 local function ensureSpoonGit(name, url, opts)
 	opts = opts or {}
 	local branch = opts.branch or "main"
@@ -26,76 +30,89 @@ local function ensureSpoonGit(name, url, opts)
 	local target = string.format("%s/%s.spoon", SPOON_DIR, name)
 	hs.fs.mkdir(SPOON_DIR)
 
-	-- Path A: in-place update if target is a git repo already
+	-- Path A: already cloned → update in the background (non-blocking)
 	if exists(target) and exists(target .. "/.git") then
-		sh(string.format([[/usr/bin/git -C %q remote set-url origin %q]], target, url))
-		sh(string.format([[/usr/bin/git -C %q fetch --prune origin]], target))
-		sh(string.format([[ /usr/bin/git -C %q checkout %q ]], target, branch))
-		if reset then
-			sh(string.format([[ /usr/bin/git -C %q reset --hard origin/%q ]], target, branch))
-		else
-			sh(string.format([[ /usr/bin/git -C %q pull --ff-only origin %q ]], target, branch))
-		end
-	else
-		-- Path B: clone fresh to a temp dir and move *.spoon folder into place
-		local tmp = string.format("%s/._tmp_%s_%d", SPOON_DIR, name, os.time())
-		sh(string.format([[rm -rf %q]], tmp))
-		local ok = sh(string.format([[/usr/bin/git clone --branch %q --depth %d %q %q]], branch, depth, url, tmp))
-		if not ok then
-			hs.alert.show("Clone failed for " .. name)
-			return false
-		end
+		local resetCmd = reset
+			and string.format([[/usr/bin/git -C %q reset --hard origin/%s]], target, branch)
+			or  string.format([[/usr/bin/git -C %q pull --ff-only origin %s]], target, branch)
+		local script = table.concat({
+			string.format([[/usr/bin/git -C %q remote set-url origin %q]], target, url),
+			string.format([[/usr/bin/git -C %q fetch --prune origin]], target),
+			string.format([[/usr/bin/git -C %q checkout %s]], target, branch),
+			resetCmd,
+		}, " && ")
+		hs.task.new("/bin/sh", function(code, _, stderr)
+			if code == 0 then
+				local _, b = sh(string.format([[/usr/bin/git -C %q rev-parse --abbrev-ref HEAD]], target))
+				local _, c = sh(string.format([[/usr/bin/git -C %q log -1 --pretty=%%h]], target))
+				b = (b or ""):gsub("%s+$", "")
+				c = (c or ""):gsub("%s+$", "")
+				hs.printf("%s.spoon => branch=%s commit=%s (bg)", name, b, c)
+			else
+				hs.printf("%s.spoon: bg update failed (exit %d): %s", name, code, (stderr or ""):gsub("%s+$", ""))
+			end
+		end, { "-c", script }):start()
+		return true
+	end
 
-		-- Find the actual spoon directory within the repo (supports nested layouts)
-		local candidate = tmp .. "/" .. name .. ".spoon"
-		local src
-		if exists(candidate) then
-			src = candidate
-		else
-			local iter, dirObj = hs.fs.dir(tmp)
-			if iter then
-				for f in iter, dirObj do
-					if f and f:match("%.spoon$") then
-						src = tmp .. "/" .. f
-						break
-					end
+	-- Path B: clone fresh (synchronous — needed for first load)
+	local tmp = string.format("%s/._tmp_%s_%d", SPOON_DIR, name, os.time())
+	sh(string.format([[rm -rf %q]], tmp))
+	local ok = sh(string.format([[/usr/bin/git clone --branch %q --depth %d %q %q]], branch, depth, url, tmp))
+	if not ok then
+		hs.alert.show("Clone failed for " .. name)
+		return false
+	end
+
+	-- Find the actual spoon directory within the repo (supports nested layouts)
+	local candidate = tmp .. "/" .. name .. ".spoon"
+	local src
+	if exists(candidate) then
+		src = candidate
+	else
+		local iter, dirObj = hs.fs.dir(tmp)
+		if iter then
+			for f in iter, dirObj do
+				if f and f:match("%.spoon$") then
+					src = tmp .. "/" .. f
+					break
 				end
 			end
-			src = src or tmp -- fallback: repo itself is the spoon
 		end
-
-		sh(string.format([[rm -rf %q]], target))
-		sh(string.format([[mkdir -p %q]], SPOON_DIR))
-		sh(string.format([[mv %q %q]], src, target))
-		sh(string.format([[rm -rf %q]], tmp))
+		src = src or tmp -- fallback: repo itself is the spoon
 	end
+
+	sh(string.format([[rm -rf %q]], target))
+	sh(string.format([[mkdir -p %q]], SPOON_DIR))
+	sh(string.format([[mv %q %q]], src, target))
+	sh(string.format([[rm -rf %q]], tmp))
 
 	-- If target is not a spoon root (missing init.lua), do a one-shot unpack
 	if not exists(target .. "/init.lua") then
-		local tmp = string.format("%s/._tmp_fix_%s_%d", SPOON_DIR, name, os.time())
-		sh(string.format([[rm -rf %q]], tmp))
-		local ok = sh(string.format([[/usr/bin/git clone --branch %q --depth %d %q %q]], branch, depth, url, tmp))
-		if ok then
-			local candidate = tmp .. "/" .. name .. ".spoon"
-			local src
-			if exists(candidate) then
-				src = candidate
+		local tmp2 = string.format("%s/._tmp_fix_%s_%d", SPOON_DIR, name, os.time())
+		sh(string.format([[rm -rf %q]], tmp2))
+		local ok2 = sh(string.format([[/usr/bin/git clone --branch %q --depth %d %q %q]], branch, depth, url, tmp2))
+		if ok2 then
+			local candidate2 = tmp2 .. "/" .. name .. ".spoon"
+			local src2
+			if exists(candidate2) then
+				src2 = candidate2
 			else
-				local iter, dirObj = hs.fs.dir(tmp)
-				if iter then
-					for f in iter, dirObj do
+				local iter2, dirObj2 = hs.fs.dir(tmp2)
+				if iter2 then
+					for f in iter2, dirObj2 do
 						if f and f:match("%.spoon$") then
-							src = tmp .. "/" .. f
+							src2 = tmp2 .. "/" .. f
 							break
 						end
 					end
 				end
-				src = src or tmp
+				src2 = src2 or tmp2
 			end
 			sh(string.format([[rm -rf %q]], target))
-			sh(string.format([[mv %q %q]], src, target))
+			sh(string.format([[mv %q %q]], src2, target))
 		end
-		sh(string.format([[rm -rf %q]], tmp))
+		sh(string.format([[rm -rf %q]], tmp2))
 	end
 
 	-- Log the exact build

@@ -19,7 +19,7 @@ local obj = {}
 obj.__index = obj
 
 obj.name = "KeyCaster"
-obj.version = "0.0.6"
+obj.version = "0.1.0"
 obj.author = "Selim Acerbas"
 obj.homepage = "https://www.github.com/selimacerbas/KeyCaster.spoon/"
 obj.license = "MIT"
@@ -103,6 +103,7 @@ obj._resolvedFont = nil
 obj._lineTimer = nil
 obj._mouseTap = nil
 -- Drag state
+obj._clickAnimations = {} -- tracked click circle timers/canvases for cleanup
 obj._dragTap = nil
 obj._drag = { active = false, offset = { x = 0, y = 0 } }
 obj._dragHighlight = nil
@@ -163,10 +164,12 @@ function obj:_measure(text)
     if ok and sz and sz.w then return sz.w end
     -- crude fallback: monospace-ish estimate
     local avg = (f.size or 18) * 0.60
-    return avg * #tostring(text)
+    local charCount = utf8.len(tostring(text)) or #tostring(text)
+    return avg * charCount
 end
 
-local specialsByName = {
+-- Key symbol mappings (customizable before :start())
+obj.specialKeys = {
     ["return"]        = "↩︎",
     ["enter"]         = "⌤",
     ["escape"]        = "⎋",
@@ -184,7 +187,7 @@ local specialsByName = {
     ["down"]          = "↓",
 }
 
-local punctuationByName = {
+obj.punctuationKeys = {
     ["comma"]        = ",",
     ["period"]       = ".",
     ["slash"]        = "/",
@@ -205,6 +208,13 @@ end
 
 function obj:_currentScreen()
     return hs.mouse.getCurrentScreen() or hs.screen.mainScreen()
+end
+
+function obj:_boxSize()
+    if self.config.mode == "line" then
+        return self.config.line.box.w, self.config.line.box.h
+    end
+    return self.config.box.w, self.config.box.h
 end
 
 function obj:_currentScreenUUID()
@@ -286,60 +296,8 @@ end
 -- ===============
 -- Menubar
 -- ===============
-function obj:_ensureMenubar(state)
-    if state then
-        if not self._menubar then
-            self._menubar = hs.menubar.new()
-            if self._menubar then
-                self._menubar:setTitle("KC")
-                self._menubar:setTooltip("KeyCaster (" .. (self.config.mode or "column") .. ")")
-                self._menubar:setMenu(function()
-                    local active = (self._tap ~= nil)
-                    return {
-                        {
-                            title = "Mode",
-                            menu = {
-                                {
-                                    title = "Column",
-                                    checked = (self.config.mode == "column"),
-                                    fn = function()
-                                        self
-                                            :setMode("column")
-                                    end
-                                },
-                                {
-                                    title = "Line",
-                                    checked = (self.config.mode == "line"),
-                                    fn = function()
-                                        self
-                                            :setMode("line")
-                                    end
-                                },
-                            }
-                        },
-                        { title = "-" },
-                        {
-                            title = active and "Stop KeyCaster" or "Start KeyCaster",
-                            fn = function() if active then self:stop() else self:start() end end
-                        },
-                    }
-                end)
-            end
-        end
-    else
-        if self._menubar then
-            self._menubar:delete()
-            self._menubar = nil
-        end
-    end
-end
-
--- Helper to refresh/update menubar contents at any time
-function obj:_refreshMenubar()
-    if not self._menubar then return end
-    self._menubar:setTitle("KC")
-    self._menubar:setTooltip("KeyCaster (" .. (self.config.mode or "column") .. ")")
-    self._menubar:setMenu(function()
+function obj:_menubarMenuFn()
+    return function()
         local active = (self._tap ~= nil)
         return {
             {
@@ -355,7 +313,32 @@ function obj:_refreshMenubar()
                 fn = function() if active then self:stop() else self:start() end end
             },
         }
-    end)
+    end
+end
+
+function obj:_ensureMenubar(state)
+    if state then
+        if not self._menubar then
+            self._menubar = hs.menubar.new()
+            if self._menubar then
+                self._menubar:setTitle("KC")
+                self._menubar:setTooltip("KeyCaster (" .. (self.config.mode or "column") .. ")")
+                self._menubar:setMenu(self:_menubarMenuFn())
+            end
+        end
+    else
+        if self._menubar then
+            self._menubar:delete()
+            self._menubar = nil
+        end
+    end
+end
+
+function obj:_refreshMenubar()
+    if not self._menubar then return end
+    self._menubar:setTitle("KC")
+    self._menubar:setTooltip("KeyCaster (" .. (self.config.mode or "column") .. ")")
+    self._menubar:setMenu(self:_menubarMenuFn())
 end
 
 -- ===============
@@ -373,10 +356,10 @@ function obj:_formatLabel(event)
 
     local keyName = self._reverseKeycodes[event:getKeyCode()]
     local pretty
-    if specialsByName[keyName] then
-        pretty = specialsByName[keyName]
-    elseif punctuationByName[keyName] then
-        pretty = punctuationByName[keyName]
+    if self.specialKeys[keyName] then
+        pretty = self.specialKeys[keyName]
+    elseif self.punctuationKeys[keyName] then
+        pretty = self.punctuationKeys[keyName]
     elseif isFunctionKey(keyName) then
         pretty = string.upper(keyName)
     elseif #chars > 0 then
@@ -713,13 +696,10 @@ function obj:_layoutLine()
 end
 
 function obj:_tickLine()
+    if self.config.line.fadeMode ~= "time" then return end
     local step = 0.03
     if not self._lineTimer then
         self._lineTimer = hs.timer.doEvery(step, function()
-            if self.config.line.fadeMode == "overflow" then
-                -- No time-based fading; nothing to update here.
-                return
-            end
             local changed = false
             for _, seg in ipairs(self._segments) do
                 seg.fadeProgress = seg.fadeProgress + (step / self.config.fadingDuration)
@@ -795,10 +775,17 @@ function obj:_flashClickAt(point, typ)
     cv:show()
 
     local created = now()
-    local t = hs.timer.doEvery(0.03, function()
+    local anim = { canvas = cv, timer = nil }
+    table.insert(self._clickAnimations, anim)
+    anim.timer = hs.timer.doEvery(0.03, function()
         local prog = (now() - created) / fade
         if prog >= 1 then
-            t:stop(); cv:delete(); return
+            if anim.timer then anim.timer:stop() end
+            if anim.canvas then anim.canvas:delete() end
+            for i, a in ipairs(self._clickAnimations) do
+                if a == anim then table.remove(self._clickAnimations, i); break end
+            end
+            return
         end
         cv:alpha(1 - prog)
         local grow = r * (0.2 * prog)
@@ -846,9 +833,8 @@ function obj:_ensureDragTap()
                 self.config.positionFree.x = nx; self.config.positionFree.y = ny
                 -- update normalized after drag
                 do
-                    local boxW = (self.config.mode == "line") and self.config.line.box.w or self.config.box.w
-                    local boxH = (self.config.mode == "line") and self.config.line.box.h or self.config.box.h
-                    self:_updateNormalized(boxW, boxH)
+                    local bw, bh = self:_boxSize()
+                    self:_updateNormalized(bw, bh)
                 end
                 if self.config.mode == "line" then self:_layoutLine() else self:_renderColumnPositions() end
                 self:_updateDragHighlight(self:_currentBounds())
@@ -908,9 +894,8 @@ function obj:_handleKey(e)
     if self.config.mode == "column" then self:_renderColumnPositions() else self:_layoutLine() end
     -- refresh normalized position after any key-driven layout
     do
-        local boxW = (self.config.mode == "line") and self.config.line.box.w or self.config.box.w
-        local boxH = (self.config.mode == "line") and self.config.line.box.h or self.config.box.h
-        self:_updateNormalized(boxW, boxH)
+        local bw, bh = self:_boxSize()
+        self:_updateNormalized(bw, bh)
     end
     return false -- don't swallow the event
 end
@@ -946,9 +931,8 @@ function obj:setMode(mode)
     end
 
     self.config.mode = mode
-    local boxW = (mode == "line") and self.config.line.box.w or self.config.box.w
-    local boxH = (mode == "line") and self.config.line.box.h or self.config.box.h
-    self:_updateNormalized(boxW, boxH)
+    local bw, bh = self:_boxSize()
+    self:_updateNormalized(bw, bh)
     if self._menubar then self._menubar:setTooltip("KeyCaster (" .. mode .. ")") end
     self:_refreshMenubar()
     return self
@@ -971,11 +955,10 @@ function obj:start()
     self:_ensureMenubar(true)
     self:_refreshMenubar()
     self._followTimer = hs.timer.doEvery(self.config.followInterval, function()
-        local boxW = (self.config.mode == "line") and self.config.line.box.w or self.config.box.w
-        local boxH = (self.config.mode == "line") and self.config.line.box.h or self.config.box.h
+        local bw, bh = self:_boxSize()
         local cur = self:_currentScreenUUID()
         if self._lastScreenUUID ~= cur then
-            self:_applyNormalized(boxW, boxH)
+            self:_applyNormalized(bw, bh)
             self._lastScreenUUID = cur
         end
         if self.config.mode == "column" then self:_renderColumnPositions() else self:_layoutLine() end
@@ -985,9 +968,8 @@ function obj:start()
     end
     -- initialize normalization
     do
-        local boxW = (self.config.mode == "line") and self.config.line.box.w or self.config.box.w
-        local boxH = (self.config.mode == "line") and self.config.line.box.h or self.config.box.h
-        self:_updateNormalized(boxW, boxH)
+        local bw, bh = self:_boxSize()
+        self:_updateNormalized(bw, bh)
         self._lastScreenUUID = self:_currentScreenUUID()
     end
 
@@ -1039,6 +1021,12 @@ function obj:stop()
         self._mouseTap:stop(); self._mouseTap = nil
     end
 
+    for _, anim in ipairs(self._clickAnimations) do
+        if anim.timer then anim.timer:stop() end
+        if anim.canvas then anim.canvas:delete() end
+    end
+    self._clickAnimations = {}
+
     self.logger.i("KeyCaster stopped"); return self
 end
 
@@ -1051,9 +1039,13 @@ end
 
 function obj:configure(tbl)
     if type(tbl) ~= "table" then return self end
-    local merged = shallowCopy(self.config)
-    for k, v in pairs(tbl) do merged[k] = v end
-    self.config = merged
+    for k, v in pairs(tbl) do
+        if type(v) == "table" and type(self.config[k]) == "table" then
+            for k2, v2 in pairs(v) do self.config[k][k2] = v2 end
+        else
+            self.config[k] = v
+        end
+    end
 
     -- ensure free position table exists if in free mode
     if self.config.positionMode == "free" then
