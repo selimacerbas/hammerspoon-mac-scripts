@@ -312,7 +312,16 @@ KeyCaster = hs.loadSpoon("KeyCaster")
 KeyCaster:bindHotkeys(KeyCaster.defaultHotkeys)
 
 ------------------------------------------------------------
--- 6) Vifari
+-- 6) StayActive
+------------------------------------------------------------
+if not skipEnsures then
+	ensureSpoonGit("StayActive", "https://github.com/selimacerbas/StayActive.spoon", { branch = "main" })
+end
+StayActive = hs.loadSpoon("StayActive")
+StayActive:bindHotkeys(StayActive.defaultHotkeys)
+
+------------------------------------------------------------
+-- 7) Vifari
 ------------------------------------------------------------
 if not skipEnsures then
 	ensureSpoonGit("Vifari", "https://github.com/dzirtusss/vifari", { branch = "main" })
