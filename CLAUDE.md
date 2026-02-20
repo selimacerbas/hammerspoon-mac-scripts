@@ -11,6 +11,7 @@
 - `FocusMode.spoon` — github.com/selimacerbas/FocusMode.spoon
 - `CursorScope.spoon` — github.com/selimacerbas/CursorScope.spoon
 - `KeyCaster.spoon` — github.com/selimacerbas/KeyCaster.spoon
+- `StayActive.spoon` — github.com/selimacerbas/StayActive.spoon
 
 **Upstream repos** (mogenson, dzirtusss):
 - `PaperWM.spoon` — github.com/mogenson/PaperWM.spoon
@@ -36,7 +37,7 @@ Each spoon under my ownership is its own git repo with its own commits, tags, an
 
 - FocusMode dims everything except focused app, PaperWM tiles windows
 - PaperWM fires rapid move/resize events during tiling; FocusMode debounces via `eventSettleDelay`
-- `wrapMove()` in init.lua calls `FocusMode:_suspendFor(1.2)` to hide overlays during PaperWM window moves
+- `wrapMove()` in init.lua adds a delayed refresh after PaperWM window moves
 - Both use separate `hs.window.filter` instances (no conflict)
 
 ## Hotkey Map
@@ -44,6 +45,7 @@ Each spoon under my ownership is its own git repo with its own commits, tags, an
 - `Ctrl+Alt+Cmd+I` — Start FocusMode
 - `Ctrl+Alt+Cmd+O` — Stop FocusMode
 - `Ctrl+Alt+Cmd+L` — Reload Hammerspoon (skip spoon git updates)
+- `Ctrl+Alt+Cmd+S` — Toggle StayActive (mouse jiggle to prevent AFK)
 - `Ctrl+Alt+Cmd+R` — Refresh PaperWM windows
 - `Cmd+Return` — Enter PaperWM nav mode (h/j/k/l to navigate, Shift to swap, Esc to exit)
 
