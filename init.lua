@@ -240,11 +240,12 @@ function nav:exited()
 	end
 end
 
--- wrapMove: for cross-space moves (async Spaces API needs a beat before retile)
+-- wrapMove: for cross-space moves (Mission Control automation needs overlays hidden)
 local function wrapMove(fn)
 	return function()
+		if FocusMode._running then FocusMode:_suspendFor(3.0) end
 		fn()
-		hs.timer.doAfter(0.25, A.refresh_windows)
+		hs.timer.doAfter(0.5, A.refresh_windows)
 	end
 end
 -- wrapSwitch: for space switching (Mission Control is async)
